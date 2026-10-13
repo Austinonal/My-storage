@@ -296,6 +296,15 @@ export function setShake(p: Project, assetId: string, shake: MediaAsset['shake']
   p.assets[assetId].shake = shake;
 }
 
+export function setAspect(p: Project, aspect: Aspect) {
+  if (!(aspect in ratios)) throw new Error(`unknown aspect ${aspect}`);
+  p.aspect = aspect;
+}
+
+export function setCanvas(p: Project, canvas: Project['canvas']) {
+  p.canvas = canvas.kind === 'blur' ? { kind: 'blur', level: clamp(Math.round(canvas.level), 1, 4) as 1 | 2 | 3 | 4 } : { kind: 'colour', colour: /^#[0-9a-f]{6}$/i.test(canvas.colour) ? canvas.colour : '#000000' };
+}
+
 export function setMatch(p: Project, clipId: string, match: MediaClip['match']) {
   visualClip(p, clipId).match = match ? { ...match, intensity: clamp(match.intensity, 0, 1) } : null;
 }
@@ -513,8 +522,10 @@ const ratios: Record<Aspect, [number, number]> = {
   '1:1': [1, 1],
   '3:4': [3, 4],
   '4:3': [4, 3],
+  '4:5': [4, 5],
   '2:1': [2, 1],
 };
+export const ASPECTS = Object.keys(ratios) as Aspect[];
 
 // `short` is the "720p / 1080p" number: the short side of the frame. Encoders want even sizes.
 export function outputSize(aspect: Aspect, short: number): [number, number] {

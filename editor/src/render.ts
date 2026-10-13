@@ -1,6 +1,9 @@
 import { SHAPES, glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
 import { textImage } from './text';
 import { STAB_ZOOM, correctionAt, flickerGainAt } from './stabilize.ts';
+import { transformAt } from './keyframes.ts';
+import { sourceAt } from './timing.ts';
+import { mergePose, transitionById } from './transitions.ts';
 import { graded } from './colour';
 import { SEC, fitContain } from './timeline.ts';
 import type { MediaClip, Project, TextClip, Us } from './schema';
@@ -154,7 +157,7 @@ export interface TextBox {
 function drawText(ctx: Ctx, W: number, H: number, c: TextClip, t: Us): TextBox {
   const glyph = glyphAt(c, t);
   const img = textImage(c, W, H, glyph);
-  const tr = c.transform;
+  const tr = transformAt(c, t);
   const box = { cx: tr.x * W, cy: tr.y * H, w: img.w * tr.scale, h: img.h * tr.scale };
   const pose = poseAt(c, t);
   drawClip(ctx, img.canvas, img.w, img.h, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
@@ -166,7 +169,7 @@ function withQuality(p: Project, c: MediaClip, t: Us, pose: Pose, box: { w: numb
   const q = c.quality;
   const s = p.assets[c.assetId].shake;
   if (!q || !s || c.kind !== 'video' || (!q.stabilize && !q.deflicker)) return pose;
-  const sec = (c.sourceIn + t * c.speed) / SEC;
+  const sec = sourceAt(c, Math.min(c.duration, Math.max(0, t))) / SEC;
   const out = { ...pose };
   if (q.stabilize) {
     const k = correctionAt(s, sec, q.stabilize);
@@ -180,48 +183,102 @@ function withQuality(p: Project, c: MediaClip, t: Us, pose: Pose, box: { w: numb
   return out;
 }
 
-function drawOverlay(ctx: Ctx, W: number, H: number, p: Project, c: MediaClip, img: CanvasImageSource, t: Us): TextBox {
-  const a = p.assets[c.assetId];
-  const tr = c.transform;
-  const fit = fitContain(a.width, a.height, W, H);
-  const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
-  const k = Math.min(1, Math.max(box.w, box.h) / Math.max(a.width, a.height));
-  const pose = withQuality(p, c, t, poseAt(c, t), box, W, H);
-  drawClip(ctx, graded(img, a.width * k, a.height * k, c), a.width, a.height, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
-  return { id: c.id, ...box, rot: tr.rotation };
+type Crop = MediaClip['crop'];
+const fullCrop = (c: Crop | undefined) => !c || (c.x === 0 && c.y === 0 && c.w === 1 && c.h === 1 && !c.rotate && !c.mirror);
+
+// The picture's size after cropping and quarter turns.
+export function cropSize(a: { width: number; height: number }, c: Crop | undefined): [number, number] {
+  if (fullCrop(c)) return [a.width, a.height];
+  const w = Math.max(1, c!.w * a.width);
+  const h = Math.max(1, c!.h * a.height);
+  return c!.rotate % 180 ? [h, w] : [w, h];
+}
+
+let cropCanvas: OffscreenCanvas | null = null;
+function cropped(img: CanvasImageSource, c: Crop | undefined): CanvasImageSource {
+  if (fullCrop(c)) return img;
+  const [iw, ih] = sourceSize(img);
+  const sw = Math.max(1, c!.w * iw);
+  const sh = Math.max(1, c!.h * ih);
+  cropCanvas ??= new OffscreenCanvas(1, 1);
+  cropCanvas.width = Math.round(c!.rotate % 180 ? sh : sw);
+  cropCanvas.height = Math.round(c!.rotate % 180 ? sw : sh);
+  const ctx = cropCanvas.getContext('2d')!;
+  ctx.setTransform(1, 0, 0, 1, cropCanvas.width / 2, cropCanvas.height / 2);
+  ctx.rotate((c!.rotate * Math.PI) / 180);
+  if (c!.mirror) ctx.scale(-1, 1);
+  ctx.drawImage(img, c!.x * iw, c!.y * ih, sw, sh, -sw / 2, -sh / 2, sw, sh);
+  return cropCanvas;
 }
 
 export const overlayClips = (p: Project) => p.tracks.filter((tr) => tr.kind === 'overlay' && !tr.hidden).flatMap((tr) => tr.clips as MediaClip[]);
 
-// One frame at timeline time `t`: the main-track clip (`img` is null while its frame is still decoding), then overlays
-// (their frames in `overlays`, by clip id), then text on top. Returns where each overlay and text was drawn.
-export function renderFrame(
-  ctx: Ctx,
-  W: number,
-  H: number,
-  p: Project,
-  t: Us,
-  clip: MediaClip | undefined,
-  img: CanvasImageSource | null,
-  overlays: Map<string, CanvasImageSource | null> = new Map(),
-): TextBox[] {
+export interface Visible {
+  clip: MediaClip;
+  local: Us; // clip time; outside 0..duration during a transition
+  extra: Partial<Pose> | null; // the transition's pose
+  main: boolean;
+}
+
+// Which pictures make up the frame at `t`, bottom to top: the main clip (two of them during a transition), then overlays.
+export function visibleAt(p: Project, t: Us): Visible[] {
+  const main = p.tracks[0].clips as MediaClip[];
+  const out: Visible[] = [];
+  const tr = p.transitions
+    .map((x) => ({ x, b: main.find((c) => c.id === x.toClipId) }))
+    .find(({ x, b }) => b && t >= b.start - x.duration / 2 && t < b.start + x.duration / 2);
+  const a = tr && main.find((c) => c.id === tr.x.fromClipId);
+  if (tr && tr.b && a) {
+    const pair = transitionById(tr.x.presetId).pair((t - (tr.b.start - tr.x.duration / 2)) / tr.x.duration);
+    out.push({ clip: a, local: t - a.start, extra: pair.a, main: true }, { clip: tr.b, local: t - tr.b.start, extra: pair.b, main: true });
+  } else {
+    const c = main.find((x) => t >= x.start && t < x.start + x.duration) ?? main.at(-1);
+    if (c) out.push({ clip: c, local: Math.min(c.duration, t - c.start), extra: null, main: true });
+  }
+  for (const c of overlayClips(p)) if (t >= c.start && t < c.start + c.duration) out.push({ clip: c, local: t - c.start, extra: null, main: false });
+  return out;
+}
+
+function drawMedia(ctx: Ctx, W: number, H: number, p: Project, v: Visible, img: CanvasImageSource, background: boolean): TextBox {
+  const c = v.clip;
+  const a = p.assets[c.assetId];
+  const [ew, eh] = cropSize(a, c.crop);
+  const local = Math.min(c.duration, Math.max(0, v.local));
+  const tr = transformAt(c, local);
+  const fit = fitContain(ew, eh, W, H);
+  const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
+  const k = Math.min(1, Math.max(box.w, box.h, 1) / Math.max(ew, eh)); // grade at the size it is drawn, never above the source
+  const src = graded(cropped(img, c.crop), ew * k, eh * k, c);
+  // Blurred background: the same picture, filling the frame, behind the clip (for a landscape clip in a portrait frame).
+  if (background && p.canvas.kind === 'blur') {
+    const s = Math.max(W / ew, H / eh) * 1.08;
+    ctx.filter = `blur(${(p.canvas.level * 0.012 * Math.max(W, H)).toFixed(1)}px) brightness(0.85)`;
+    ctx.drawImage(src, (W - ew * s) / 2, (H - eh * s) / 2, ew * s, eh * s);
+    ctx.filter = 'none';
+  }
+  let pose = withQuality(p, c, v.local, poseAt(c, local), box, W, H);
+  if (v.extra) pose = mergePose(pose, v.extra);
+  drawClip(ctx, src, ew, eh, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
+  return { id: c.id, ...box, rot: tr.rotation };
+}
+
+// One frame at timeline time `t`. `frames` holds each visible clip's picture by clip id (missing or null while it decodes).
+// Returns where each overlay and text was drawn, for tapping and dragging on the preview.
+export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, frames: Map<string, CanvasImageSource | null>): TextBox[] {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.filter = 'none';
   ctx.globalAlpha = 1;
   ctx.fillStyle = p.canvas.kind === 'colour' ? p.canvas.colour : '#000000';
   ctx.fillRect(0, 0, W, H);
-  if (clip && img) {
-    const a = p.assets[clip.assetId];
-    const k = Math.min(1, Math.max(W, H) / Math.max(a.width, a.height)); // grade at output size, never above the source
-    const local = Math.min(clip.duration, Math.max(0, t - clip.start));
-    const pose = withQuality(p, clip, local, poseAt(clip, local), fitContain(a.width, a.height, W, H), W, H);
-    drawClip(ctx, graded(img, a.width * k, a.height * k, clip), a.width, a.height, W, H, pose);
-  }
   const boxes: TextBox[] = [];
-  for (const c of overlayClips(p)) {
-    const frame = overlays.get(c.id);
-    if (frame && t >= c.start && t < c.start + c.duration) boxes.push(drawOverlay(ctx, W, H, p, c, frame, t - c.start));
+  let background = true;
+  for (const v of visibleAt(p, t)) {
+    const img = frames.get(v.clip.id);
+    if (!img) continue;
+    const box = drawMedia(ctx, W, H, p, v, img, background && v.main);
+    if (v.main) background = false;
+    else boxes.push(box);
   }
   for (const track of p.tracks) {
     if (track.kind !== 'text' || track.hidden) continue;

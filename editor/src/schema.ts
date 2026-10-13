@@ -6,7 +6,7 @@ export const SCHEMA_VERSION = 1;
 export type Id = string; // crypto.randomUUID()
 export type Us = number; // integer microseconds, the WebCodecs unit
 
-export type Aspect = '9:16' | '16:9' | '1:1' | '3:4' | '4:3' | '2:1';
+export type Aspect = '9:16' | '16:9' | '1:1' | '3:4' | '4:3' | '4:5' | '2:1';
 export type Fps = 24 | 25 | 30 | 50 | 60;
 
 export interface Project {
@@ -73,7 +73,8 @@ export interface MediaClip extends ClipBase {
   kind: 'video' | 'photo';
   assetId: Id;
   sourceIn: Us; // 0 for photos
-  speed: number; // 0.1..100; source span = duration * speed
+  speed: number; // 0.1..100; source span = duration * speed (the average when there is a curve)
+  curve?: [number, number][] | null; // speed ramp: (position 0..1, relative speed) points
   reversed: boolean;
   volume: number; // 0..2, 1 = 100 %
   transform: Transform;

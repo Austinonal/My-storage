@@ -92,3 +92,39 @@ async function makePeaks(a: MediaAsset): Promise<Float32Array | null> {
     input.dispose();
   }
 }
+
+const covers = new Map<string, Promise<string | null>>();
+
+// One frame (half a second in, or the photo) as a small JPEG, for the project list.
+export function coverOf(a: MediaAsset) {
+  let c = covers.get(a.id);
+  if (!c) {
+    c = (async () => {
+      if (a.kind === 'audio' || !a.width) return null;
+      const w = 320;
+      const h = Math.max(1, Math.round((w * a.height) / a.width));
+      const out = new OffscreenCanvas(w, h);
+      const ctx = out.getContext('2d')!;
+      const blob = await openMedia(a.file);
+      if (a.kind === 'photo') {
+        const bmp = await createImageBitmap(blob);
+        ctx.drawImage(bmp, 0, 0, w, h);
+        bmp.close();
+      } else {
+        const input = openInput(blob);
+        try {
+          const track = await input.getPrimaryVideoTrack();
+          if (!track || !(await track.canDecode())) return null;
+          const frame = await new CanvasSink(track, { width: w, height: h, fit: 'fill', poolSize: 1 }).getCanvas(Math.min(0.5, a.duration / SEC / 2));
+          if (!frame) return null;
+          ctx.drawImage(frame.canvas, 0, 0);
+        } finally {
+          input.dispose();
+        }
+      }
+      return URL.createObjectURL(await out.convertToBlob({ type: 'image/jpeg', quality: 0.75 }));
+    })().catch(() => null);
+    covers.set(a.id, c);
+  }
+  return c;
+}

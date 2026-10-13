@@ -1,13 +1,14 @@
 import type { AudioClip, MediaClip, Project, Us } from './schema';
 import { openMedia } from './media';
-import { overlayClips, renderFrame, type TextBox } from './render';
+import { overlayClips, renderFrame, visibleAt, type TextBox } from './render';
+import { fileSecondsAt, rateAt } from './timing.ts';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
 
-type Source = { kind: 'video'; el: HTMLVideoElement } | { kind: 'photo'; img: ImageBitmap };
-
 // Plays a project in a canvas: one clock, every media element follows it and is corrected when it drifts.
+// Main-track videos share one element per file (a second one only while a transition shows two parts of the same file);
+// overlay videos and audio clips get their own.
 export class Player {
   time: Us = 0;
   playing = false;
@@ -17,10 +18,11 @@ export class Player {
   selectedBox: string | null = null; // framed in the preview only, never in the export
 
   private p: Project | null = null;
-  private sources = new Map<string, Source>(); // main-track media, by asset id
+  private photos = new Map<string, ImageBitmap>(); // by asset id
+  private videos = new Map<string, HTMLVideoElement>(); // main: file path (+ '#2'); overlay: 'ov:' + clip id
   private audios = new Map<string, HTMLAudioElement>(); // audio-track clips, by clip id
-  private overlayVideos = new Map<string, HTMLVideoElement>(); // overlay video clips, by clip id
-  private urls = new Map<string, string>();
+  private assigned = new Map<string, HTMLVideoElement>(); // clip id -> the element showing it right now
+  private urls = new Map<string, string>(); // by file path
   private loading = new Set<string>();
   private raf = 0;
   private clock = { at: 0, t: 0 };
@@ -30,15 +32,26 @@ export class Player {
     void loadFonts().then(() => this.draw());
   }
 
+  private pathOf(c: MediaClip | AudioClip) {
+    const a = this.p!.assets[c.assetId];
+    return c.kind === 'video' && c.reversed && a.reversedFile ? a.reversedFile : a.file;
+  }
+
   setProject(p: Project) {
     this.p = p;
-    const ids = new Set(p.tracks.flatMap((t) => t.clips.map((c) => c.id)));
-    for (const map of [this.audios, this.overlayVideos]) {
-      for (const [id, el] of map) {
-        if (ids.has(id)) continue;
-        el.pause();
-        map.delete(id);
-      }
+    const clips = p.tracks.flatMap((t) => t.clips);
+    const ids = new Set(clips.map((c) => c.id));
+    for (const [id, el] of this.audios) {
+      if (ids.has(id)) continue;
+      el.pause();
+      this.audios.delete(id);
+    }
+    const keep = new Set(clips.flatMap((c) => (c.kind === 'video' ? [this.pathOf(c), `${this.pathOf(c)}#2`, `ov:${c.id}`] : [])));
+    for (const [key, el] of this.videos) {
+      if (keep.has(key)) continue;
+      el.pause();
+      el.removeAttribute('src');
+      this.videos.delete(key);
     }
     this.time = Math.min(this.time, projectDuration(p));
     void prepareLuts(p).then(() => this.draw());
@@ -47,48 +60,40 @@ export class Player {
     this.draw();
   }
 
-  private async url(assetId: string) {
-    let u = this.urls.get(assetId);
+  private async url(path: string) {
+    let u = this.urls.get(path);
     if (!u) {
-      u = URL.createObjectURL(await openMedia(this.p!.assets[assetId].file));
-      this.urls.set(assetId, u);
+      u = URL.createObjectURL(await openMedia(path));
+      this.urls.set(path, u);
     }
     return u;
   }
 
+  private makeVideo(key: string, url: string) {
+    const el = document.createElement('video');
+    el.preload = 'auto';
+    el.playsInline = true;
+    el.addEventListener('seeked', () => this.draw());
+    el.addEventListener('loadeddata', () => this.draw());
+    el.src = url;
+    this.videos.set(key, el);
+    return el;
+  }
+
   private async load(p: Project) {
     const jobs: [string, () => Promise<void>][] = [];
-    const photo = async (assetId: string) => {
-      if (!this.sources.has(assetId)) this.sources.set(assetId, { kind: 'photo', img: await createImageBitmap(await openMedia(p.assets[assetId].file)) });
-    };
-    for (const c of overlayClips(p)) {
-      jobs.push([c.kind === 'photo' ? c.assetId : c.id, async () => {
-        if (c.kind === 'photo') return photo(c.assetId);
-        if (this.overlayVideos.has(c.id)) return;
-        const el = document.createElement('video');
-        el.preload = 'auto';
-        el.playsInline = true;
-        el.addEventListener('seeked', () => this.draw());
-        el.addEventListener('loadeddata', () => this.draw());
-        el.src = await this.url(c.assetId);
-        this.overlayVideos.set(c.id, el);
-      }]);
-    }
-    for (const c of p.tracks[0].clips as MediaClip[]) {
-      const asset = p.assets[c.assetId];
-      jobs.push([c.assetId, async () => {
-        if (this.sources.has(asset.id)) return;
-        if (asset.kind === 'photo') {
-          this.sources.set(asset.id, { kind: 'photo', img: await createImageBitmap(await openMedia(asset.file)) });
-          return;
-        }
-        const el = document.createElement('video');
-        el.preload = 'auto';
-        el.playsInline = true;
-        el.addEventListener('seeked', () => this.draw());
-        el.addEventListener('loadeddata', () => this.draw());
-        el.src = await this.url(asset.id);
-        this.sources.set(asset.id, { kind: 'video', el });
+    for (const v of [...(p.tracks[0].clips as MediaClip[]).map((c) => ({ c, main: true })), ...overlayClips(p).map((c) => ({ c, main: false }))]) {
+      const { c } = v;
+      if (c.kind === 'photo') {
+        jobs.push([c.assetId, async () => {
+          if (!this.photos.has(c.assetId)) this.photos.set(c.assetId, await createImageBitmap(await openMedia(p.assets[c.assetId].file)));
+        }]);
+        continue;
+      }
+      const path = this.pathOf(c);
+      const key = v.main ? path : `ov:${c.id}`;
+      jobs.push([key, async () => {
+        if (!this.videos.has(key)) this.makeVideo(key, await this.url(path));
       }]);
     }
     for (const t of p.tracks.slice(1)) {
@@ -96,7 +101,7 @@ export class Player {
         if (c.kind !== 'audio') continue;
         jobs.push([c.id, async () => {
           if (this.audios.has(c.id)) return;
-          const el = new Audio(await this.url(c.assetId));
+          const el = new Audio(await this.url(this.pathOf(c)));
           el.preload = 'auto';
           this.audios.set(c.id, el);
         }]);
@@ -117,18 +122,11 @@ export class Player {
     this.draw();
   }
 
-  private mainAt(t: Us): MediaClip | undefined {
-    const clips = this.p!.tracks[0].clips as MediaClip[];
-    return clips.find((c) => t >= c.start && t < c.start + c.duration) ?? clips.at(-1);
-  }
-
-  private follow(el: HTMLMediaElement, c: MediaClip | AudioClip | null, muted: boolean) {
-    if (!c) {
-      if (!el.paused) el.pause();
-      return;
-    }
-    const want = (c.sourceIn + (this.time - c.start) * c.speed) / SEC + FRAME_NUDGE;
-    el.playbackRate = Math.min(16, Math.max(0.0625, c.speed));
+  private follow(el: HTMLMediaElement, c: MediaClip | AudioClip, local: Us, muted: boolean) {
+    const asset = this.p!.assets[c.assetId];
+    const want = fileSecondsAt(c, asset.duration, local) + FRAME_NUDGE;
+    // shortcut: media elements play at most 16x; faster parts of a clip are kept in step by seeking
+    el.playbackRate = Math.min(16, Math.max(0.0625, rateAt(c, Math.min(c.duration, Math.max(0, local)))));
     el.volume = Math.min(1, c.volume); // shortcut: preview caps volume at 100 %; the export uses the real gain
     el.muted = muted;
     if (this.playing) {
@@ -144,37 +142,54 @@ export class Player {
     const p = this.p;
     if (!p) return;
     const t = this.time;
-    const main = this.mainAt(t);
-    for (const [assetId, s] of this.sources) {
-      if (s.kind === 'video') this.follow(s.el, main?.assetId === assetId && t < main.start + main.duration ? main : null, p.tracks[0].muted);
+    this.assigned.clear();
+    const used = new Set<HTMLVideoElement>();
+    for (const v of visibleAt(p, t)) {
+      const c = v.clip;
+      if (c.kind !== 'video') continue;
+      const path = this.pathOf(c);
+      let el = this.videos.get(v.main ? path : `ov:${c.id}`);
+      if (el && used.has(el)) {
+        const u = this.urls.get(path);
+        el = this.videos.get(`${path}#2`) ?? (u ? this.makeVideo(`${path}#2`, u) : undefined);
+      }
+      if (!el) continue;
+      used.add(el);
+      this.assigned.set(c.id, el);
+      const track = p.tracks.find((x) => x.clips.includes(c))!;
+      this.follow(el, c, v.local, track.muted || v.local < 0 || v.local > c.duration); // the bit a transition borrows is silent
     }
+    for (const el of this.videos.values()) if (!used.has(el) && !el.paused) el.pause();
     for (const track of p.tracks.slice(1)) {
       for (const c of track.clips) {
-        const el = c.kind === 'audio' ? this.audios.get(c.id) : c.kind === 'video' ? this.overlayVideos.get(c.id) : undefined;
-        if (el && c.kind !== 'text' && c.kind !== 'photo') this.follow(el, t >= c.start && t < c.start + c.duration ? c : null, track.muted);
+        const el = c.kind === 'audio' ? this.audios.get(c.id) : undefined;
+        if (!el || c.kind !== 'audio') continue;
+        if (t >= c.start && t < c.start + c.duration) this.follow(el, c, t - c.start, track.muted);
+        else if (!el.paused) el.pause();
       }
     }
   }
 
-  // The frame source for a main-track clip, for thumbnails and stills.
+  // The picture a clip shows right now, for drawing, tile stills and freeze frames.
   sourceOf(c: MediaClip): CanvasImageSource | null {
-    const own = this.overlayVideos.get(c.id);
-    if (own) return own.readyState >= 2 ? own : null;
-    const s = this.sources.get(c.assetId);
-    if (!s) return null;
-    return s.kind === 'photo' ? s.img : s.el.readyState >= 2 ? s.el : null;
+    if (c.kind === 'photo') return this.photos.get(c.assetId) ?? null;
+    const el = this.assigned.get(c.id) ?? this.videos.get(`ov:${c.id}`) ?? this.videos.get(this.pathOf(c));
+    return el && el.readyState >= 2 ? el : null;
   }
 
   draw() {
     const p = this.p;
     if (!p) return;
-    const clip = this.mainAt(this.time);
-    const img = clip ? this.sourceOf(clip) : null;
-    if (!img && this.playing) return; // keep the last frame while the next clip seeks
+    const frames = new Map<string, CanvasImageSource | null>();
+    let missing = false;
+    for (const v of visibleAt(p, this.time)) {
+      const img = this.sourceOf(v.clip);
+      frames.set(v.clip.id, img);
+      if (v.main && !img) missing = true;
+    }
+    if (missing && this.playing) return; // keep the last frame while the next clip seeks
     const ctx = this.canvas.getContext('2d')!;
-    const overlays = new Map<string, CanvasImageSource | null>();
-    for (const c of overlayClips(p)) if (this.time >= c.start && this.time < c.start + c.duration) overlays.set(c.id, this.sourceOf(c));
-    this.textBoxes = renderFrame(ctx, this.canvas.width, this.canvas.height, p, this.time, clip, img, overlays);
+    this.textBoxes = renderFrame(ctx, this.canvas.width, this.canvas.height, p, this.time, frames);
     const b = this.textBoxes.find((x) => x.id === this.selectedBox);
     if (!b) return;
     const px = devicePixelRatio;
@@ -244,11 +259,8 @@ export class Player {
 
   destroy() {
     cancelAnimationFrame(this.raf);
-    for (const s of this.sources.values()) {
-      if (s.kind === 'video') s.el.pause();
-      else s.img.close();
-    }
-    for (const el of [...this.audios.values(), ...this.overlayVideos.values()]) el.pause();
+    for (const img of this.photos.values()) img.close();
+    for (const el of [...this.audios.values(), ...this.videos.values()]) el.pause();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
   }
 }

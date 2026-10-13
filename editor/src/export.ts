@@ -18,7 +18,8 @@ import {
 import type { AudioClip, ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
-import { overlayClips, renderFrame } from './render';
+import { renderFrame, visibleAt } from './render';
+import { fileSecondsAt } from './timing.ts';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 
@@ -109,7 +110,6 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
   const videoCodec = await getFirstEncodableVideoCodec(prefer, { width, height, frameRate: s.fps, quality: quality[s.bitrate] });
   if (!videoCodec) throw new ExportError('no-video-encoder');
 
-  const clips = p.tracks[0].clips as MediaClip[];
   const total = projectDuration(p);
   const audioCodec = mixed ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: mixed.sampleRate }) : null;
 
@@ -141,44 +141,14 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
     }
     const frames = Math.max(1, Math.round((total / SEC) * s.fps));
     const frameTime = (i: number) => Math.round((i * SEC) / s.fps);
-    const overlays = overlayFeeder(p, width, height, frames, frameTime);
-    let i = 0;
-    for (const clip of clips) {
-      const asset = p.assets[clip.assetId];
-      const box = fitContain(asset.width, asset.height, width, height);
-      const timestamps: number[] = [];
-      for (; i < frames && frameTime(i) < clip.start + clip.duration; i++) {
-        timestamps.push((clip.sourceIn + (frameTime(i) - clip.start) * clip.speed) / SEC + FRAME_NUDGE);
-      }
-      if (clip.kind === 'photo') {
-        const bitmap = await createImageBitmap(await openMedia(asset.file));
-        try {
-          for (let n = i - timestamps.length; n < i; ) {
-            signal.throwIfAborted();
-            renderFrame(ctx, width, height, p, frameTime(n), clip, bitmap, await overlays.at(n));
-            await video.add(n / s.fps, 1 / s.fps);
-            onProgress(++n / frames);
-          }
-        } finally {
-          bitmap.close();
-        }
-        continue;
-      }
-      const input = openInput(await openMedia(asset.file));
-      try {
-        const sink = new CanvasSink((await input.getPrimaryVideoTrack())!, { width: box.w, height: box.h, fit: 'fill', poolSize: 2 });
-        let n = i - timestamps.length;
-        for await (const frame of sink.canvasesAtTimestamps(timestamps)) {
-          signal.throwIfAborted();
-          renderFrame(ctx, width, height, p, frameTime(n), clip, frame?.canvas ?? null, await overlays.at(n));
-          await video.add(n / s.fps, 1 / s.fps);
-          onProgress(++n / frames);
-        }
-      } finally {
-        input.dispose();
-      }
+    const feed = clipFeeder(p, width, height, frames, frameTime);
+    for (let n = 0; n < frames; ) {
+      signal.throwIfAborted();
+      renderFrame(ctx, width, height, p, frameTime(n), await feed.at(n));
+      await video.add(n / s.fps, 1 / s.fps);
+      onProgress(++n / frames);
     }
-    overlays.dispose();
+    feed.dispose();
     await output.finalize();
   } catch (e) {
     if (output.state !== 'finalized') await output.cancel();
@@ -187,50 +157,50 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
   }
 }
 
-// Frames for every overlay, pulled in step with the main track: each overlay video gets its own decoder,
-// opened when the overlay first appears and closed after its last frame.
-function overlayFeeder(p: Project, width: number, height: number, frames: number, frameTime: (n: number) => number) {
-  type Feed = { c: MediaClip; first: number; last: number; bmp?: ImageBitmap; input?: ReturnType<typeof openInput>; it?: AsyncIterator<WrappedCanvas | null> };
-  const feeds: Feed[] = [];
-  for (const c of overlayClips(p)) {
-    let first = -1;
-    let last = -1;
-    for (let n = 0; n < frames; n++) {
-      const t = frameTime(n);
-      if (t < c.start || t >= c.start + c.duration) continue;
-      if (first < 0) first = n;
-      last = n;
+// Pictures for every clip that shows in the frame (main clips, two during a transition, and overlays), pulled in frame order.
+// Each video gets its own decoder, opened when it first shows and closed after its last frame; the time asked of it
+// follows the clip's speed, speed curve and direction (reversed clips read their reversed copy).
+function clipFeeder(p: Project, width: number, height: number, frames: number, frameTime: (n: number) => number) {
+  type Feed = { c: MediaClip; frames: number[]; locals: number[]; next: number; bmp?: ImageBitmap; input?: ReturnType<typeof openInput>; it?: AsyncIterator<WrappedCanvas | null> };
+  const feeds = new Map<string, Feed>();
+  for (let n = 0; n < frames; n++) {
+    for (const v of visibleAt(p, frameTime(n))) {
+      let f = feeds.get(v.clip.id);
+      if (!f) feeds.set(v.clip.id, (f = { c: v.clip, frames: [], locals: [], next: 0 }));
+      f.frames.push(n);
+      f.locals.push(v.local);
     }
-    if (first >= 0) feeds.push({ c, first, last });
   }
   const close = (f: Feed) => {
     f.bmp?.close();
     f.input?.dispose();
     f.bmp = f.input = f.it = undefined;
   };
+  const last = (f: Feed) => f.frames[f.frames.length - 1];
   return {
     async at(n: number) {
       const out = new Map<string, CanvasImageSource | null>();
-      for (const f of feeds) if (n > f.last) close(f); // finished overlays let go of their decoder (after their last frame was drawn)
-      for (const f of feeds) {
-        if (n < f.first || n > f.last) continue;
+      for (const f of feeds.values()) if (n > last(f) && (f.bmp || f.input)) close(f); // after its last frame was drawn
+      for (const f of feeds.values()) {
+        if (f.frames[f.next] !== n) continue;
+        f.next++;
         const { c } = f;
         const asset = p.assets[c.assetId];
         if (c.kind === 'photo') {
           f.bmp ??= await createImageBitmap(await openMedia(asset.file));
           out.set(c.id, f.bmp);
-        } else {
-          if (!f.it) {
-            const s = Math.min(2, Math.max(0.1, c.transform.scale));
-            const box = fitContain(asset.width, asset.height, width * s, height * s);
-            f.input = openInput(await openMedia(asset.file));
-            const sink = new CanvasSink((await f.input.getPrimaryVideoTrack())!, { width: Math.min(asset.width, box.w), height: Math.min(asset.height, box.h), fit: 'fill', poolSize: 2 });
-            const ts = Array.from({ length: f.last - f.first + 1 }, (_, k) => (c.sourceIn + (frameTime(f.first + k) - c.start) * c.speed) / SEC + FRAME_NUDGE);
-            f.it = sink.canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
-          }
-          const r = await f.it.next();
-          out.set(c.id, r.done ? null : (r.value?.canvas ?? null));
+          continue;
         }
+        if (!f.it) {
+          // Decode at the size it is drawn (bigger when zoomed or cropped), never above the source.
+          const zoom = Math.min(3, Math.max(0.1, c.transform.scale, ...c.keyframes.filter((k) => k.prop === 'scale').map((k) => k.value)) / Math.min(c.crop.w, c.crop.h));
+          const box = fitContain(asset.width, asset.height, width * zoom, height * zoom);
+          f.input = openInput(await openMedia(c.reversed && asset.reversedFile ? asset.reversedFile : asset.file));
+          const sink = new CanvasSink((await f.input.getPrimaryVideoTrack())!, { width: Math.min(asset.width, box.w), height: Math.min(asset.height, box.h), fit: 'fill', poolSize: 2 });
+          f.it = sink.canvasesAtTimestamps(f.locals.map((local) => fileSecondsAt(c, asset.duration, local) + FRAME_NUDGE))[Symbol.asyncIterator]();
+        }
+        const r = await f.it.next();
+        out.set(c.id, r.done ? null : (r.value?.canvas ?? null));
       }
       return out;
     },

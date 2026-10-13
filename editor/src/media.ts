@@ -81,6 +81,21 @@ export async function openMedia(path: string): Promise<File> {
   return (await (await dir('media', projectId)).getFileHandle(id)).getFile();
 }
 
+// Saves a file the app made itself (a still frame, a recording, a reversed copy) next to the project's media.
+export async function storeMedia(projectId: string, id: string, blob: Blob) {
+  const handle = await (await dir('media', projectId)).getFileHandle(id, { create: true });
+  await blob.stream().pipeTo(await handle.createWritable());
+  return `media/${projectId}/${id}`;
+}
+
+// Copies every media file of a project into another project's folder (for "ทำสำเนา").
+export async function copyProjectMedia(from: string, to: string) {
+  const src = await dir('media', from);
+  for await (const [name] of (src as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+    await storeMedia(to, name, await (await src.getFileHandle(name)).getFile());
+  }
+}
+
 async function removeDir(name: 'media' | 'exports', projectId: string) {
   try {
     await (await dir(name)).removeEntry(projectId, { recursive: true });

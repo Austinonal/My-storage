@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } fr
 import { Film, Image, Layers, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration, snap, snapPoints, sourceOut } from '../timeline.ts';
 import { PEAK_RATE, THUMB_H, peaksOf, stripOf } from '../thumbs';
+import { sourceAt } from '../timing.ts';
 import type { AudioClip, Clip, MediaAsset, MediaClip, Project, Us } from '../schema';
 
 type Move = { index: number } | { start: Us };
@@ -33,7 +34,7 @@ function Filmstrip({ asset, clip, pps, h }: { asset: MediaAsset; clip: MediaClip
   return (
     <span aria-hidden className="pointer-events-none absolute inset-0 flex overflow-hidden">
       {Array.from({ length: n }, (_, i) => {
-        const at = clip.kind === 'photo' ? 0 : clip.sourceIn / SEC + (((i + 0.5) * tw) / pps) * clip.speed;
+        const at = clip.kind === 'photo' ? 0 : sourceAt(clip, (((i + 0.5) * tw) / pps) * SEC) / SEC;
         const idx = Math.min(strip.count - 1, Math.max(0, Math.floor(at / strip.step)));
         return (
           <span

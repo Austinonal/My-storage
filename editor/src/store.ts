@@ -1,4 +1,5 @@
-import { createStore, get, set, values } from 'idb-keyval';
+import { createStore, del, get, set, values } from 'idb-keyval';
+import { copyProjectMedia, deleteProjectMedia } from './media';
 import { useSyncExternalStore } from 'react';
 import type { Project } from './schema';
 import { assertValid } from './timeline.ts';
@@ -94,4 +95,41 @@ export function redo() {
 export async function listProjects() {
   await flush();
   return (await values<Project>(db)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function renameProject(id: string, name: string) {
+  if (state.project?.id === id) return edit((d) => (d.name = name));
+  await flush();
+  const p = await get<Project>(id, db);
+  if (p) await set(id, { ...p, name, updatedAt: new Date().toISOString() }, db);
+}
+
+// A full copy: the document under a new id, and every media file copied into its own folder.
+export async function duplicateProject(id: string, name: string) {
+  await flush();
+  const p = await get<Project>(id, db);
+  if (!p) return null;
+  const q: Project = structuredClone(p);
+  q.id = crypto.randomUUID();
+  q.name = name;
+  q.createdAt = q.updatedAt = new Date().toISOString();
+  for (const a of Object.values(q.assets)) {
+    a.file = a.file.replace(`media/${id}/`, `media/${q.id}/`);
+    if (a.reversedFile) a.reversedFile = a.reversedFile.replace(`media/${id}/`, `media/${q.id}/`);
+  }
+  try {
+    await copyProjectMedia(id, q.id);
+  } catch (e) {
+    await deleteProjectMedia(q.id);
+    throw e;
+  }
+  await set(q.id, q, db);
+  return q;
+}
+
+export async function deleteProject(id: string) {
+  await flush();
+  if (state.project?.id === id) emit({ project: null, past: [], future: [] });
+  await del(id, db);
+  await deleteProjectMedia(id);
 }

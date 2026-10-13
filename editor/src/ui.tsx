@@ -268,14 +268,14 @@ export function DraftCard({
   name: string;
   duration: string;
   updated: string;
-  cover?: string;
+  cover?: ReactNode;
   missingMedia?: boolean;
   onOpen: () => void;
 }) {
   return (
     <button onClick={onOpen} className={`flex w-full flex-col gap-2 text-left ${focus}`}>
       <span className="relative aspect-video w-full overflow-hidden rounded-md bg-raised">
-        {cover && <img src={cover} alt="" className="size-full object-cover" />}
+        {cover}
         {missingMedia && (
           <span role="img" aria-label="Some media is missing" className="absolute top-2 left-2 text-warning">
             <TriangleAlert size={20} aria-hidden />

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus } from 'lucide-react';
-import { Button, DraftCard, TopBar } from '../ui';
-import { createProject, listProjects } from '../store';
+import { Copy, Ellipsis, Pencil, Plus, Trash2 } from 'lucide-react';
+import { BottomSheet, Button, DraftCard, TopBar } from '../ui';
+import { createProject, deleteProject, duplicateProject, listProjects, renameProject } from '../store';
+import { coverOf } from '../thumbs';
 import { ImportError, deleteProjectMedia, importMedia } from '../media';
 import { addMedia, formatTime, newProject, projectDuration } from '../timeline.ts';
 import type { Project } from '../schema';
@@ -20,14 +21,104 @@ export function importMessage(e: unknown) {
   return `นำเข้าไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`;
 }
 
+function Cover({ p }: { p: Project }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const first = p.tracks[0].clips[0];
+    const asset = first && first.kind !== 'text' ? p.assets[first.assetId] : undefined;
+    let live = true;
+    if (asset) void coverOf(asset).then((u) => live && setUrl(u));
+    return () => {
+      live = false;
+    };
+  }, [p]);
+  return url ? <img src={url} alt="" className="size-full object-cover" /> : null;
+}
+
+// Rename, copy or delete one project. Delete asks once more, because it also removes the copied media.
+function Manage({ p, onClose, onChanged }: { p: Project | null; onClose: () => void; onChanged: () => void }) {
+  const [name, setName] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setName(p?.name ?? '');
+    setConfirm(false);
+    setError('');
+  }, [p]);
+  async function run(job: () => Promise<unknown>) {
+    setBusy(true);
+    setError('');
+    try {
+      await job();
+      onChanged();
+      onClose();
+    } catch (e) {
+      setError(importMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <BottomSheet open={!!p} title="จัดการโปรเจกต์" onClose={onClose}>
+      {p && (
+        <div className="flex flex-col gap-3">
+          <label htmlFor="project-name" className="text-sm">
+            ชื่อโปรเจกต์
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="project-name"
+              value={name}
+              maxLength={80}
+              onChange={(e) => setName(e.target.value)}
+              className="h-10 min-w-0 flex-1 rounded-md border border-border-input bg-bg px-3 text-sm focus-visible:outline-2 focus-visible:outline-accent"
+            />
+            <Button size="md" disabled={busy || !name.trim() || name.trim() === p.name} onClick={() => void run(() => renameProject(p.id, name.trim()))}>
+              <Pencil size={16} aria-hidden /> เปลี่ยนชื่อ
+            </Button>
+          </div>
+          <Button variant="secondary" loading={busy} onClick={() => void run(() => duplicateProject(p.id, `${p.name} (สำเนา)`))}>
+            <Copy size={16} aria-hidden /> ทำสำเนา
+          </Button>
+          {confirm ? (
+            <div role="alert" className="flex flex-col gap-2 rounded-md bg-raised p-3">
+              <p className="text-sm">ลบ “{p.name}” และไฟล์ที่นำเข้ามาในโปรเจกต์นี้? กู้คืนไม่ได้</p>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="md" onClick={() => setConfirm(false)}>
+                  ไม่ลบ
+                </Button>
+                <Button variant="danger" size="md" disabled={busy} onClick={() => void run(() => deleteProject(p.id))}>
+                  <Trash2 size={16} aria-hidden /> ลบเลย
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="danger" onClick={() => setConfirm(true)}>
+              <Trash2 size={16} aria-hidden /> ลบโปรเจกต์
+            </Button>
+          )}
+          {error && (
+            <p role="alert" className="text-xs text-danger">
+              {error}
+            </p>
+          )}
+        </div>
+      )}
+    </BottomSheet>
+  );
+}
+
 export function Home() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const picker = useRef<HTMLInputElement>(null);
+  const [manage, setManage] = useState<Project | null>(null);
 
+  const reload = () => listProjects().then(setProjects, (e) => setError(`โหลดโปรเจกต์ไม่สำเร็จ (${e})`));
   useEffect(() => {
-    listProjects().then(setProjects, (e) => setError(`โหลดโปรเจกต์ไม่สำเร็จ (${e})`));
+    void reload();
   }, []);
 
   async function onPick(files: File[]) {
@@ -84,18 +175,27 @@ export function Home() {
         ) : (
           <ul className="grid grid-cols-2 gap-4">
             {projects.map((p) => (
-              <li key={p.id} className="min-w-0">
+              <li key={p.id} className="relative min-w-0">
                 <DraftCard
                   name={p.name}
                   duration={formatTime(projectDuration(p))}
                   updated={new Date(p.updatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                  cover={<Cover p={p} />}
                   onOpen={() => (location.hash = `#/edit/${p.id}`)}
                 />
+                <button
+                  aria-label={`จัดการ ${p.name}`}
+                  onClick={() => setManage(p)}
+                  className="absolute top-1 right-1 grid size-9 place-items-center rounded-pill bg-bg/70 text-fg focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  <Ellipsis size={18} aria-hidden />
+                </button>
               </li>
             ))}
           </ul>
         )}
       </main>
+      <Manage p={manage} onClose={() => setManage(null)} onChanged={() => void reload()} />
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Captions, Gem, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
-import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
+import { ArrowLeft, Captions, Gem, Ratio, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { BottomSheet, BottomToolbar, Button, Slider, Swatches, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
 import { Player } from '../player';
 import {
   SEC,
+  ASPECTS,
   addAudio,
   addMedia,
   addOverlay,
@@ -17,6 +18,8 @@ import {
   projectDuration,
   replaceClip,
   setAdjust,
+  setAspect,
+  setCanvas,
   setFilter,
   setGrade,
   setMatch,
@@ -41,7 +44,7 @@ import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -444,6 +447,7 @@ export function Editor({ id }: { id: string }) {
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
             <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(Math.min(time, Math.max(0, total - SEC)))} />
+            <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
             <ToolButton icon={Captions} label="คำบรรยาย" disabled={!p || busy} active={sheet === 'captions'} onClick={() => setSheet('captions')} />
             <ToolButton icon={Layers} label="ภาพซ้อน" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
             <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
@@ -503,6 +507,50 @@ export function Editor({ id }: { id: string }) {
       )}
       {p && visual && (
         <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} still={still} onApplyAll={() => colourToAll(visual)} />
+      )}
+      {p && (
+        <BottomSheet open={sheet === 'canvas'} title="อัตราส่วนและพื้นหลัง" onClose={() => setSheet(null)} modal={false}>
+          <div className="flex flex-col gap-3">
+            <div role="radiogroup" aria-label="อัตราส่วนภาพ" className="grid grid-cols-4 gap-2">
+              {ASPECTS.map((r) => {
+                const [x, y] = r.split(':').map(Number);
+                return (
+                  <button
+                    key={r}
+                    role="radio"
+                    aria-checked={p.aspect === r}
+                    onClick={() => edit((d) => setAspect(d, r))}
+                    className={`flex h-16 flex-col items-center justify-center gap-1 rounded-md text-xs ${p.aspect === r ? 'bg-accent text-on-accent' : 'bg-raised'} focus-visible:outline-2 focus-visible:outline-accent`}
+                  >
+                    <span aria-hidden className="rounded-sm border-2 border-current" style={{ width: (20 * x) / Math.max(x, y), height: (20 * y) / Math.max(x, y) }} />
+                    {r}
+                  </button>
+                );
+              })}
+            </div>
+            <div role="radiogroup" aria-label="พื้นหลัง" className="flex gap-2">
+              {(['สีพื้น', 'เบลอ'] as const).map((label) => {
+                const on = (label === 'เบลอ') === (p.canvas.kind === 'blur');
+                return (
+                  <button
+                    key={label}
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => edit((d) => setCanvas(d, label === 'เบลอ' ? { kind: 'blur', level: 2 } : { kind: 'colour', colour: '#000000' }))}
+                    className={`h-10 flex-1 rounded-md text-sm ${on ? 'bg-fg text-bg' : 'bg-raised'} focus-visible:outline-2 focus-visible:outline-accent`}
+                  >
+                    พื้นหลัง{label}
+                  </button>
+                );
+              })}
+            </div>
+            {p.canvas.kind === 'colour' ? (
+              <Swatches label="สีพื้นหลัง" colours={['#000000', '#ffffff', '#1c1c1e', '#ff3b30', '#ffd84d', '#34c759', '#007aff', '#ff4f8b']} value={p.canvas.colour} onChange={(c) => edit((d) => setCanvas(d, { kind: 'colour', colour: c }), 'canvas-colour')} />
+            ) : (
+              <Slider label="ความเบลอ" value={p.canvas.level} min={1} max={4} step={1} onChange={(v) => edit((d) => setCanvas(d, { kind: 'blur', level: v as 1 | 2 | 3 | 4 }), 'canvas-blur')} />
+            )}
+          </div>
+        </BottomSheet>
       )}
       {p && visual && (
         <QualitySheet open={sheet === 'quality'} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} onExport={() => (location.hash = `#/export/${id}`)} />
