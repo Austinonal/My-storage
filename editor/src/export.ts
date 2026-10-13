@@ -106,6 +106,20 @@ function inWorker(p: Project, s: ExportSettings, mixed: MixedAudio | null, onPro
 export type WorkerStart = { type: 'start'; project: Project; settings: ExportSettings; audio: MixedAudio | null };
 export type WorkerReply = { type: 'progress'; value: number } | { type: 'done' } | { type: 'error'; name: string; message: string; code?: ExportError['code'] };
 
+// A thumbnail: the frame at time 0 as a JPEG (YouTube takes up to 2 MB; 1280 x 720 at this quality is far below).
+export async function exportStill(p: Project, height: number): Promise<File> {
+  const [width, h] = outputSize(p.aspect, height);
+  await Promise.all([loadFonts(), prepareLuts(p), preparePerson(p)]);
+  const canvas = new OffscreenCanvas(width, h);
+  const feed = clipFeeder(p, width, h, 1, () => 0);
+  try {
+    renderFrame(canvas.getContext('2d')!, width, h, p, 0, await feed.at(0));
+  } finally {
+    feed.dispose();
+  }
+  return new File([await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })], `${p.name}.jpg`, { type: 'image/jpeg' });
+}
+
 // Renders every frame and writes the finished MP4 into the project's export file.
 export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAudio | null, onProgress: (fraction: number) => void, signal: AbortSignal) {
   const [width, height] = outputSize(p.aspect, s.height);

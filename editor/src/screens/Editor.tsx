@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, AudioLines, Captions, Crop, Diamond, Drum, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, UserRound, Volume2, WandSparkles, Zap, Crosshair, ScanFace } from 'lucide-react';
+import { ArrowLeft, AudioLines, Captions, Crop, Diamond, Drum, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, UserRound, Volume2, WandSparkles, Zap, Crosshair, ScanFace, ScanSearch } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, Swatches, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
-import { importMedia, storeMedia } from '../media';
+import { importMedia, openMedia, storeMedia } from '../media';
 import { buildReversed } from '../reverse';
 import { keyNear, transformAt } from '../keyframes';
 import { Player } from '../player';
@@ -30,6 +30,8 @@ import {
   setAspect,
   setCanvas,
   setCutout,
+  coverMain,
+  applyLayout,
   setFollow,
   setReframe,
   outputSize,
@@ -55,6 +57,9 @@ import { BeatSheet, CropSheet, CutoutSheet, EffectSheet, SoundSheet, SpeedSheet,
 import { monoOf } from '../thumbs';
 import { speechRanges } from '../sound.ts';
 import { personPath, trackSpot } from '../follow';
+import { analyzeThumbnail, layoutAssets } from '../thumbnail';
+import { makeMatch } from '../colour';
+import { Layers as LayerList } from './Layers';
 import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, Easing, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
@@ -117,6 +122,7 @@ export function Editor({ id }: { id: string }) {
   const overlayInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const backgroundInput = useRef<HTMLInputElement>(null);
+  const referenceInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setStatus('loading');
@@ -124,6 +130,7 @@ export function Editor({ id }: { id: string }) {
   }, [id]);
 
   const p = project?.id === id ? project : null;
+  const thumb = !!p?.still; // a thumbnail: one picture, no time
   const sel = selected(p, selectedId);
   const visual = sel && (sel.kind === 'video' || sel.kind === 'photo') ? sel : null;
   const textSel = sel?.kind === 'text' ? sel : null;
@@ -233,7 +240,15 @@ export function Editor({ id }: { id: string }) {
     setNotice('');
     try {
       const asset = await importMedia(p.id, file);
-      edit((d) => replaceClip(d, visual.id, asset));
+      // A thumbnail's new background fills the frame and takes the colours of the picture it copies.
+      const background = thumb && mainSel?.id === visual.id;
+      const ref = background && p.still?.reference ? p.assets[p.still.reference] : undefined;
+      const look = ref && asset.kind === 'photo' ? await makeMatch(new File([await openMedia(ref.file)], ref.name, { type: 'image/jpeg' }), { ...visual, assetId: asset.id, sourceIn: 0 }, asset) : null;
+      edit((d) => {
+        replaceClip(d, visual.id, asset);
+        if (background) coverMain(d);
+        if (look) setMatch(d, visual.id, { ...look, intensity: 0.7 });
+      });
     } catch (e) {
       setNotice(importMessage(e));
     } finally {
@@ -485,6 +500,31 @@ export function Editor({ id }: { id: string }) {
     }
   }
 
+  // A reference picture: its person and text spots become a slot and styled text; its colours go onto the background.
+  async function applyReference(file: File | undefined) {
+    if (!p || !file) return;
+    setBusy(true);
+    setBusyText('กำลังวิเคราะห์รูปต้นแบบ…');
+    setNotice('');
+    try {
+      const layout = await analyzeThumbnail(file);
+      const { reference, slot } = await layoutAssets(p.id, file, layout);
+      const main = p.tracks[0].clips[0] as MediaClip;
+      const look = p.assets[main.assetId].placeholder ? null : await makeMatch(file, main, p.assets[main.assetId]);
+      edit((d) => {
+        applyLayout(d, layout, reference, slot);
+        if (look) setMatch(d, main.id, { ...look, intensity: 0.7 });
+      });
+      setSelectedId(null);
+      setNotice(`วางตามต้นแบบแล้ว: ${layout.person ? 'ช่องคน 1 ช่อง, ' : ''}ข้อความ ${layout.texts.length} จุด${look ? ', โทนสีตามต้นแบบ' : ''}${layout.person ? ' · แตะ “ช่องรูป (ว่าง)” แล้วกด “แทนที่” ใส่รูปคนของคุณ' : ''}`);
+    } catch (e) {
+      setNotice(`อ่านรูปต้นแบบไม่สำเร็จ: ${importMessage(e)}`);
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  }
+
   // Auto reframe: every main clip wider than the frame zooms to fill it and slides to keep the person in the middle.
   async function reframeAll() {
     if (!p) return;
@@ -576,7 +616,7 @@ export function Editor({ id }: { id: string }) {
     <div className="flex h-dvh flex-col">
       <TopBar
         left={
-          <Button variant="ghost" size="md" aria-label="กลับไปหน้าโปรเจกต์" onClick={() => (location.hash = '#/')}>
+          <Button variant="ghost" size="md" aria-label="กลับไปหน้าโปรเจกต์" onClick={() => (location.hash = thumb ? '#/thumbs' : '#/')}>
             <ArrowLeft size={20} aria-hidden />
           </Button>
         }
@@ -613,9 +653,9 @@ export function Editor({ id }: { id: string }) {
           <Redo2 size={20} aria-hidden />
         </Button>
         <span className="flex-1 text-center font-mono text-xs text-muted">
-          {formatTime(time, true)} / {formatTime(total, true)}
+          {!thumb && `${formatTime(time, true)} / ${formatTime(total, true)}`}
         </span>
-        {placed && time >= placed.start && time <= placed.start + placed.duration && (
+        {!thumb && placed && time >= placed.start && time <= placed.start + placed.duration && (
           <Button
             variant="ghost"
             size="md"
@@ -626,9 +666,11 @@ export function Editor({ id }: { id: string }) {
             <Diamond size={20} aria-hidden className={onKey ? 'fill-accent text-accent' : ''} />
           </Button>
         )}
-        <Button variant="ghost" size="md" aria-label={playing ? 'หยุด' : 'เล่น'} disabled={!p} onClick={() => (playing ? player?.pause() : player?.play())}>
-          {playing ? <Pause size={20} aria-hidden /> : <Play size={20} aria-hidden />}
-        </Button>
+        {!thumb && (
+          <Button variant="ghost" size="md" aria-label={playing ? 'หยุด' : 'เล่น'} disabled={!p} onClick={() => (playing ? player?.pause() : player?.play())}>
+            {playing ? <Pause size={20} aria-hidden /> : <Play size={20} aria-hidden />}
+          </Button>
+        )}
       </div>
 
       {(notice || busy) && (
@@ -637,7 +679,17 @@ export function Editor({ id }: { id: string }) {
         </p>
       )}
 
-      {p && (
+      {p && thumb && (
+        <LayerList
+          project={p}
+          selectedId={sel?.id ?? null}
+          onSelect={(clipId) => {
+            setSelectedId(clipId);
+            setNotice('');
+          }}
+        />
+      )}
+      {p && !thumb && (
         <Timeline
           project={p}
           time={time}
@@ -659,7 +711,16 @@ export function Editor({ id }: { id: string }) {
       )}
 
       <BottomToolbar label={sel ? 'เครื่องมือคลิป' : 'เครื่องมือ'}>
-        {!sel && (
+        {!sel && thumb && (
+          <>
+            <ToolButton icon={ImagePlus} label="เพิ่มรูป" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
+            <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(0)} />
+            <ToolButton icon={ScanSearch} label="ทำตามต้นแบบ" disabled={!p || busy} onClick={() => referenceInput.current?.click()} />
+            <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
+            <ToolButton icon={Zap} label="เอฟเฟกต์" disabled={!p || busy} active={sheet === 'effect'} onClick={() => setSheet('effect')} />
+          </>
+        )}
+        {!sel && !thumb && (
           <>
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
@@ -676,11 +737,11 @@ export function Editor({ id }: { id: string }) {
           <>
             {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
-            {(textSel || overlaySel) && <ToolButton icon={Crosshair} label="ติดตาม" disabled={busy} active={sheet === 'track'} onClick={() => setSheet('track')} />}
+            {!thumb && (textSel || overlaySel) && <ToolButton icon={Crosshair} label="ติดตาม" disabled={busy} active={sheet === 'track'} onClick={() => setSheet('track')} />}
             {sel.kind === 'effect' && <ToolButton icon={Zap} label="เปลี่ยนเอฟเฟกต์" active={sheet === 'effect'} onClick={() => setSheet('effect')} />}
             {visual && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
-            {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Gauge} label="ความเร็ว" active={sheet === 'speed'} onClick={() => setSheet('speed')} />}
-            {visual?.kind === 'video' && <ToolButton icon={Rewind} label="ถอยหลัง" disabled={busy} active={visual.reversed} aria-pressed={visual.reversed} onClick={() => void toggleReverse()} />}
+            {!thumb && (sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Gauge} label="ความเร็ว" active={sheet === 'speed'} onClick={() => setSheet('speed')} />}
+            {!thumb && visual?.kind === 'video' && <ToolButton icon={Rewind} label="ถอยหลัง" disabled={busy} active={visual.reversed} aria-pressed={visual.reversed} onClick={() => void toggleReverse()} />}
             {mainSel?.kind === 'video' && <ToolButton icon={Snowflake} label="หยุดภาพ" disabled={busy} onClick={() => void freeze()} />}
             {mainSel?.kind === 'video' && <ToolButton icon={AudioLines} label="ลบช่วงเงียบ" disabled={busy} onClick={() => void removeSilence()} />}
             {sel.kind === 'audio' && <ToolButton icon={Drum} label="ตัดตามบีท" active={sheet === 'beat'} onClick={() => setSheet('beat')} />}
@@ -688,9 +749,9 @@ export function Editor({ id }: { id: string }) {
               captureStill(320);
               setSheet('crop');
             }} />}
-            <ToolButton icon={Scissors} label="แยก" onClick={split} />
-            <ToolButton icon={SlidersHorizontal} label={sel.kind === 'video' || sel.kind === 'audio' ? 'ตัด' : 'ระยะเวลา'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />
-            {animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={() => {
+            {!thumb && <ToolButton icon={Scissors} label="แยก" onClick={split} />}
+            {!thumb && <ToolButton icon={SlidersHorizontal} label={sel.kind === 'video' || sel.kind === 'audio' ? 'ตัด' : 'ระยะเวลา'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />}
+            {!thumb && animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={() => {
               captureStill();
               setSheet('anim');
             }} />}
@@ -698,7 +759,7 @@ export function Editor({ id }: { id: string }) {
             {visual && <ToolButton icon={UserRound} label="ตัดพื้นหลัง" active={sheet === 'cutout'} onClick={() => setSheet('cutout')} />}
             {visual && <ToolButton icon={Gem} label="คุณภาพ" active={sheet === 'quality'} onClick={() => setSheet('quality')} />}
             {visual && <ToolButton icon={SunMedium} label="ปรับแก้" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
-            {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="เสียง" active={sheet === 'sound'} onClick={() => setSheet('sound')} />}
+            {!thumb && (sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="เสียง" active={sheet === 'sound'} onClick={() => setSheet('sound')} />}
             <ToolButton icon={Trash2} label="ลบ" disabled={onlyMain} onClick={() => remove(sel.id)} />
           </>
         )}
@@ -716,7 +777,11 @@ export function Editor({ id }: { id: string }) {
         void setBackground(e.target.files?.[0]);
         e.target.value = '';
       }} />
-      <input ref={overlayInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอสำหรับภาพซ้อน" onChange={(e) => {
+      <input ref={referenceInput} type="file" accept="image/*" hidden aria-label="เลือกรูปต้นแบบ" onChange={(e) => {
+        void applyReference(e.target.files?.[0]);
+        e.target.value = '';
+      }} />
+      <input ref={overlayInput} type="file" accept={thumb ? 'image/*' : 'video/*,image/*'} hidden aria-label="เลือกรูปหรือวิดีโอสำหรับภาพซ้อน" onChange={(e) => {
         void addOverlayFile(e.target.files?.[0]);
         e.target.value = '';
       }} />
@@ -754,7 +819,12 @@ export function Editor({ id }: { id: string }) {
                     key={r}
                     role="radio"
                     aria-checked={p.aspect === r}
-                    onClick={() => edit((d) => setAspect(d, r))}
+                    onClick={() =>
+                      edit((d) => {
+                        setAspect(d, r);
+                        if (d.still) coverMain(d); // a thumbnail's background keeps filling the frame
+                      })
+                    }
                     className={`flex h-16 flex-col items-center justify-center gap-1 rounded-md text-xs ${p.aspect === r ? 'bg-accent text-on-accent' : 'bg-raised'} focus-visible:outline-2 focus-visible:outline-accent`}
                   >
                     <span aria-hidden className="rounded-sm border-2 border-current" style={{ width: (20 * x) / Math.max(x, y), height: (20 * y) / Math.max(x, y) }} />
@@ -779,9 +849,11 @@ export function Editor({ id }: { id: string }) {
                 );
               })}
             </div>
-            <Button variant="secondary" disabled={busy} onClick={() => void reframeAll()}>
-              <ScanFace size={16} aria-hidden /> จัดเฟรมอัตโนมัติตามตัวคน
-            </Button>
+            {!thumb && (
+              <Button variant="secondary" disabled={busy} onClick={() => void reframeAll()}>
+                <ScanFace size={16} aria-hidden /> จัดเฟรมอัตโนมัติตามตัวคน
+              </Button>
+            )}
             {p.canvas.kind === 'colour' ? (
               <Swatches label="สีพื้นหลัง" colours={['#000000', '#ffffff', '#1c1c1e', '#ff3b30', '#ffd84d', '#34c759', '#007aff', '#ff4f8b']} value={p.canvas.colour} onChange={(c) => edit((d) => setCanvas(d, { kind: 'colour', colour: c }), 'canvas-colour')} />
             ) : (
@@ -865,7 +937,7 @@ export function Editor({ id }: { id: string }) {
           clip={textSel}
           shown={transformAt(textSel, local)}
           setTransform={(patch, key) => edit((d) => setTransformAt(d, textSel.id, local, patch), key)}
-          onNext={() => newText(textSel.start + textSel.duration, textSel)}
+          onNext={thumb ? undefined : () => newText(textSel.start + textSel.duration, textSel)}
         />
       )}
       {p && sel && (

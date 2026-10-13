@@ -7,7 +7,7 @@ import { getPreset } from '../anim.ts';
 import { addAudio, applyTemplate, outputSize } from '../timeline.ts';
 import { importMessage } from './Home';
 import type { Slot } from '../analyze.ts';
-import type { MediaAsset, MediaClip, Project } from '../schema';
+import type { Aspect, MediaAsset, MediaClip, Project } from '../schema';
 
 type State =
   | { kind: 'idle' }
@@ -15,8 +15,9 @@ type State =
   | { kind: 'result'; slots: Slot[]; file: File }
   | { kind: 'error'; message: string };
 
-async function placeholderFile(p: Project): Promise<File> {
-  const [w, h] = outputSize(p.aspect, 360);
+// An empty slot to replace later: a grey picture with a plus, in the given shape.
+export async function placeholderFile(aspect: Aspect): Promise<File> {
+  const [w, h] = outputSize(aspect, 360);
   const c = new OffscreenCanvas(w, h);
   const ctx = c.getContext('2d')!;
   const css = getComputedStyle(document.documentElement);
@@ -62,7 +63,7 @@ export function TemplateSheet({ open, onClose, project, onApplied }: { open: boo
     setApplying(true);
     try {
       let hole: MediaAsset | undefined = Object.values(project.assets).find((a) => a.placeholder);
-      if (!hole) hole = { ...(await importMedia(project.id, await placeholderFile(project))), placeholder: true };
+      if (!hole) hole = { ...(await importMedia(project.id, await placeholderFile(project.aspect))), placeholder: true };
       const sound = withAudio ? await importMedia(project.id, file, 'audio') : null;
       edit((d) => {
         applyTemplate(d, slots, hole);

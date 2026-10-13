@@ -4,7 +4,9 @@ import { Media } from '@capacitor-community/media';
 import { Share } from '@capacitor/share';
 
 const CHUNK = 3 * 1024 * 1024; // a multiple of 3, so every base64 chunk decodes on its own
-const ALBUM = 'Movies/Editor';
+const ALBUM = { video: 'Movies/Editor', photo: 'Pictures/Editor' };
+const kindOf = (file: File) => (file.type.startsWith('image/') ? 'photo' : 'video');
+const extOf = (file: File) => (kindOf(file) === 'photo' ? 'jpg' : 'mp4');
 const native = Capacitor.isNativePlatform();
 
 async function base64(blob: Blob) {
@@ -30,7 +32,7 @@ let cached: { file: File; path: string; uri: string } | null = null;
 async function inCache(file: File, name: string) {
   if (cached?.file === file) return cached.uri;
   if (cached) await Filesystem.deleteFile({ path: cached.path, directory: Directory.Cache }).catch(() => {});
-  const path = `exports/${safeName(name)}.mp4`;
+  const path = `exports/${safeName(name)}.${extOf(file)}`;
   await write(file, path, Directory.Cache);
   const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
   cached = { file, path, uri };
@@ -38,28 +40,31 @@ async function inCache(file: File, name: string) {
 }
 
 // Returns a description of where the file went on the phone, or null when the browser handled it as a download.
-export async function saveVideo(file: File, name: string): Promise<string | null> {
+// Videos go to the gallery album Movies/Editor, thumbnails (JPEG) to Pictures/Editor.
+export async function saveExport(file: File, name: string): Promise<string | null> {
   const safe = safeName(name);
+  const kind = kindOf(file);
   if (!native) {
     const url = URL.createObjectURL(file);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${safe}.mp4`;
+    a.download = `${safe}.${extOf(file)}`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
     return null;
   }
   const uri = await inCache(file, name);
   try {
-    // Public Movies/Editor, added to the gallery's index right away; it stays when the app is uninstalled.
-    await Filesystem.mkdir({ path: ALBUM, directory: Directory.ExternalStorage, recursive: true }).catch(() => {}); // already there
-    const album = decodeURIComponent((await Filesystem.getUri({ path: ALBUM, directory: Directory.ExternalStorage })).uri.replace(/^file:\/\//, ''));
-    await Media.saveVideo({ path: uri, albumIdentifier: album, fileName: `${safe}-${Date.now()}` });
+    // A public album, added to the gallery's index right away; it stays when the app is uninstalled.
+    await Filesystem.mkdir({ path: ALBUM[kind], directory: Directory.ExternalStorage, recursive: true }).catch(() => {}); // already there
+    const album = decodeURIComponent((await Filesystem.getUri({ path: ALBUM[kind], directory: Directory.ExternalStorage })).uri.replace(/^file:\/\//, ''));
+    const options = { path: uri, albumIdentifier: album, fileName: `${safe}-${Date.now()}` };
+    await (kind === 'photo' ? Media.savePhoto(options) : Media.saveVideo(options));
     return 'แกลเลอรี (อัลบั้ม Editor)';
   } catch (e) {
     // Never lose the export: if the gallery refuses, keep the old place.
     console.warn('gallery save failed, writing to Documents:', e);
-    const path = `${safe}-${Date.now()}.mp4`;
+    const path = `${safe}-${Date.now()}.${extOf(file)}`;
     await write(file, path, Directory.Documents);
     return `Documents/${path}`;
   }
@@ -67,9 +72,9 @@ export async function saveVideo(file: File, name: string): Promise<string | null
 
 export const canShare = (file: File) => native || !!navigator.canShare?.({ files: [file] });
 
-export async function shareVideo(file: File, name: string) {
+export async function shareExport(file: File, name: string) {
   try {
-    if (native) await Share.share({ title: name, files: [await inCache(file, name)], dialogTitle: 'แชร์วิดีโอ' });
+    if (native) await Share.share({ title: name, files: [await inCache(file, name)], dialogTitle: kindOf(file) === 'photo' ? 'แชร์รูป' : 'แชร์วิดีโอ' });
     else await navigator.share({ files: [file], title: name });
   } catch (e) {
     if (!/cancel|abort/i.test(String((e as Error)?.message ?? e)) && (e as DOMException)?.name !== 'AbortError') throw e; // closing the share sheet is not an error

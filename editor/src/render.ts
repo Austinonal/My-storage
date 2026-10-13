@@ -252,7 +252,7 @@ function drawMedia(ctx: Ctx, W: number, H: number, p: Project, v: Visible, img: 
   const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
   const k = Math.min(1, Math.max(box.w, box.h, 1) / Math.max(ew, eh)); // grade at the size it is drawn, never above the source
   let src = graded(cropped(img, c.crop), ew * k, eh * k, c);
-  if (c.cutout || personOnly) {
+  if ((c.cutout && !a.placeholder) || personOnly) { // an empty slot shows as it is until a photo goes in
     // One mask per frame: a playing video's own time, a photo once, an export frame by its clip time.
     const frame = typeof HTMLVideoElement !== 'undefined' && img instanceof HTMLVideoElement ? img.currentTime : c.kind === 'photo' ? 0 : v.local;
     const key = `${c.id}|${frame}|${Math.round(ew * k)}x${Math.round(eh * k)}|${JSON.stringify(c.crop)}`;

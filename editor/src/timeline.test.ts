@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setSpeed, setCurve, setCrop, insertFreeze, setTransition, setTransformAt, toggleKeyframe, setFades, extractAudio, setReversed, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, addEffect, setEffect, syncToBeats, keepParts, setReframe, setFollow, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setSpeed, setCurve, setCrop, insertFreeze, setTransition, setTransformAt, toggleKeyframe, setFades, extractAudio, setReversed, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, addEffect, setEffect, syncToBeats, keepParts, setReframe, setFollow, newThumbnail, applyLayout, setAspect, coverMain, type TemplateSlot } from './timeline.ts';
 import { transformAt } from './keyframes.ts';
 
 const asset: MediaAsset = {
@@ -449,5 +449,26 @@ test('follow: a text keeps its offset from what it tracks and keeps its other ke
   const c = findClip(p, id) as TextClip;
   assert.ok(Math.abs(transformAt(c, SEC).x - 0.6) < 1e-6 && Math.abs(transformAt(c, SEC).y - 0.77) < 1e-6);
   assert.ok(Math.abs(transformAt(c, 1.5 * SEC).x - 0.65) < 1e-6);
+  assertValid(p);
+});
+
+test('thumbnail: 16:9 with the background filling it; a reference adds a cut-out person slot and styled text', () => {
+  const portrait: MediaAsset = { ...asset, id: 'bg', kind: 'photo', duration: 0, width: 1080, height: 1920 };
+  const p = newThumbnail('t1', 'cover', portrait, '2026-01-01T00:00:00Z');
+  assert.equal(p.aspect, '16:9');
+  assert.ok(p.still);
+  assert.ok(Math.abs(clipOf(p).transform.scale - (16 / 9) / (9 / 16)) < 0.01); // a portrait photo zooms to cover the wide frame
+  const ref: MediaAsset = { ...portrait, id: 'ref', width: 1280, height: 720 };
+  const slot: MediaAsset = { ...portrait, id: 'slot', width: 900, height: 1200, placeholder: true };
+  applyLayout(p, { aspect: '1:1', person: { cx: 0.7, cy: 0.6, w: 0.3, h: 0.72 }, texts: [{ cx: 0.3, cy: 0.2, w: 0.5, h: 0.1, fill: '#ffdd22', stroke: '#000000' }] }, ref, slot);
+  assert.equal(p.aspect, '1:1');
+  assert.equal(p.still?.reference, 'ref');
+  assert.ok(Math.abs(clipOf(p).transform.scale - 16 / 9) < 0.01); // covers the new square frame
+  const person = p.tracks.find((t) => t.kind === 'overlay')!.clips[0] as MediaClip;
+  assert.deepEqual([person.transform.x, person.transform.y, Math.round(person.transform.scale * 100), person.cutout], [0.7, 0.6, 80, { bg: 'clear' }]);
+  const text = p.tracks.find((t) => t.kind === 'text')!.clips[0] as TextClip;
+  assert.deepEqual([text.transform.x, text.transform.y, text.style.colour, text.style.stroke?.colour, text.style.size], [0.3, 0.2, '#ffdd22ff', '#000000ff', 119]);
+  setAspect(p, '16:9');
+  coverMain(p);
   assertValid(p);
 });

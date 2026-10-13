@@ -51,7 +51,7 @@ const POSITIONS: [string, number][] = [
   ['ล่าง', 0.82],
 ];
 
-export function TextSheet({ open, onClose, clip, shown, setTransform, onNext }: { open: boolean; onClose: () => void; clip: TextClip; shown: TextClip['transform']; setTransform: (patch: Partial<TextClip['transform']>, key: string) => void; onNext: () => void }) {
+export function TextSheet({ open, onClose, clip, shown, setTransform, onNext }: { open: boolean; onClose: () => void; clip: TextClip; shown: TextClip['transform']; setTransform: (patch: Partial<TextClip['transform']>, key: string) => void; onNext?: () => void }) {
   const [tab, setTab] = useState<Tab>('สไตล์');
   const area = useRef<HTMLTextAreaElement>(null);
   const s = clip.style;
@@ -75,12 +75,14 @@ export function TextSheet({ open, onClose, clip, shown, setTransform, onNext }: 
           onChange={(e) => edit((d) => updateText(d, clip.id, { text: e.target.value }), `text-input-${clip.id}`)}
           className="w-full resize-none rounded-md border border-border-input bg-bg p-2 text-base focus-visible:outline-2 focus-visible:outline-accent"
         />
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="md" onClick={onNext}>
-            <Captions size={16} aria-hidden /> ซับถัดไป
-          </Button>
-          <span className="text-xs text-muted">{(clip.duration / SEC).toFixed(1)} วิ · ต่อท้ายด้วยสไตล์เดียวกัน</span>
-        </div>
+        {onNext && (
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="md" onClick={onNext}>
+              <Captions size={16} aria-hidden /> ซับถัดไป
+            </Button>
+            <span className="text-xs text-muted">{(clip.duration / SEC).toFixed(1)} วิ · ต่อท้ายด้วยสไตล์เดียวกัน</span>
+          </div>
+        )}
         <CategoryTabs items={[...TABS]} value={tab} onChange={(v) => setTab(v as Tab)} />
 
         {tab === 'สไตล์' && (

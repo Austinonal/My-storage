@@ -1,6 +1,7 @@
 import { SCHEMA_VERSION, type Adjust, type Aspect, type Easing, type EffectClip, type Grade, type Voice, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
 import { CURVE_CHANNELS, HSL_COLOURS, WHEELS, neutralGrade } from './grade.ts';
 import { KEY_PROPS, setEasing, setKeys, toggleKey, transformAt } from './keyframes.ts';
+import type { Layout } from './layout.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
@@ -53,6 +54,22 @@ export function newProject(id: string, name: string, asset: MediaAsset, now: str
 }
 
 // Videos and photos go onto the main track at `index` (end by default), in the order given.
+// A thumbnail: one picture, 16:9 like a video cover, its background photo filling the frame.
+export function newThumbnail(id: string, name: string, background: MediaAsset, now: string): Project {
+  const p = newProject(id, name, background, now);
+  p.still = {};
+  p.aspect = '16:9';
+  coverMain(p);
+  return p;
+}
+
+// The background of a thumbnail fills the frame (after a new photo or a new aspect).
+export function coverMain(p: Project) {
+  const c = p.tracks[0].clips[0] as MediaClip;
+  c.keyframes = c.keyframes.filter((k) => !(KEY_PROPS as readonly string[]).includes(k.prop));
+  c.transform = { ...c.transform, x: 0.5, y: 0.5, scale: fillOf(p, c).scale };
+}
+
 export function addMedia(p: Project, assets: MediaAsset[], index = p.tracks[0].clips.length) {
   const clips = assets.map((a) => {
     p.assets[a.id] = a;
@@ -614,16 +631,21 @@ function keyPath(c: MediaClip | TextClip, points: { at: Us; values: Transform }[
   for (const { at, values } of points) for (const prop of KEY_PROPS) c.keyframes.push({ at, prop, value: values[prop], easing: 'linear' });
 }
 
-// Auto reframe: the clip zooms to fill the frame and slides so the person (`fx`, 0..1 across the picture) stays centred.
-export function setReframe(p: Project, clipId: string, path: { at: Us; fx: number }[]) {
-  const c = visualClip(p, clipId);
-  if (!path.length) return;
+// The zoom (1 = fits inside) at which a clip covers the whole frame, and its width then, in frame widths.
+function fillOf(p: Project, c: MediaClip) {
   const a = p.assets[c.assetId];
   const [ew, eh] = c.crop.rotate % 180 ? [a.height * c.crop.h, a.width * c.crop.w] : [a.width * c.crop.w, a.height * c.crop.h];
   const [W, H] = outputSize(p.aspect, 1080);
   const fit = fitContain(ew, eh, W, H);
-  const scale = Math.max(W / fit.w, H / fit.h); // contain -> cover
-  const bw = (fit.w * scale) / W; // picture width in frame widths
+  const scale = Math.max(W / fit.w, H / fit.h);
+  return { scale, bw: (fit.w * scale) / W };
+}
+
+// Auto reframe: the clip zooms to fill the frame and slides so the person (`fx`, 0..1 across the picture) stays centred.
+export function setReframe(p: Project, clipId: string, path: { at: Us; fx: number }[]) {
+  const c = visualClip(p, clipId);
+  if (!path.length) return;
+  const { scale, bw } = fillOf(p, c);
   const base = { ...c.transform, y: 0.5, scale };
   c.keyframes = c.keyframes.filter((k) => !(KEY_PROPS as readonly string[]).includes(k.prop));
   c.transform = { ...base, x: 0.5 };
@@ -688,6 +710,26 @@ export function keepParts(p: Project, clipId: string, parts: [Us, Us][]) {
     removed++;
   }
   return removed;
+}
+
+// A thumbnail laid out like a reference picture: its shape, a slot for the person where it has one (cut out once a photo
+// is put in) and text where it has text, in its colours and about its size. Layers already there stay.
+export function applyLayout(p: Project, layout: Layout, reference: MediaAsset, slot: MediaAsset | null) {
+  p.assets[reference.id] = reference;
+  p.still = { ...p.still, reference: reference.id };
+  setAspect(p, layout.aspect);
+  coverMain(p);
+  if (layout.person && slot) {
+    const c = findClip(p, addOverlay(p, slot, 0)) as MediaClip;
+    c.transform = { ...c.transform, x: layout.person.cx, y: layout.person.cy, scale: clamp(layout.person.h / 0.9, 0.2, 1.5) }; // the person fills about 90 % of their photo's height
+    c.cutout = { bg: 'clear' };
+  }
+  const [, H] = outputSize(p.aspect, 1080); // text sizes are pixels on a frame whose short side is 1080
+  for (const t of layout.texts) {
+    const size = clamp(Math.round(t.h * H * 1.1), 16, 240); // the letters' ink is about 0.9 of the font size
+    const id = addText(p, 0, 'ใส่ข้อความ', { ...SUBTITLE, colour: `${t.fill}ff`, size, stroke: t.stroke ? { colour: `${t.stroke}ff`, width: Math.max(4, Math.round(size * 0.1)) } : null });
+    updateText(p, id, { transform: { x: t.cx, y: t.cy } });
+  }
 }
 
 // Many captions at once (pasted lines or a subtitle file), each looking like `like` when given.

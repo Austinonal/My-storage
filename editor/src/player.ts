@@ -293,6 +293,7 @@ export class Player {
 
   destroy() {
     cancelAnimationFrame(this.raf);
+    this.p = null; // a draw promised before (fonts, colour tables, the cutout model) must not touch the closed pictures
     for (const img of this.photos.values()) img.close();
     for (const el of [...this.audios.values(), ...this.videos.values()]) el.pause();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);

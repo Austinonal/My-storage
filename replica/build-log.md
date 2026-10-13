@@ -2,6 +2,19 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — thumbnails, and thumbnails laid out like any picture (our own addition)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| S01 Home | done | none | none |
+| S33 Thumbnail editor | done | layer order (overlays stay under text), stickers, PNG | a draw promised before the editor closed (fonts, colours, the cutout model) hit pictures already closed; the player now forgets its project when it is destroyed |
+| Reference layout | done | text that sits on the person, rotated text, more than four text spots | picking the outline colour by "the smaller part" fails for thick outlines; the outline is now the colour that touches the surroundings |
+
+- **Home**: two choices at the top, "ตัดต่อคลิป" (as before) and "ทำปก (Thumbnail)" with its own list, "ปกใหม่จากรูป" and "ทำตามรูปต้นแบบ".
+- **Thumbnail editor**: the same editor without time: a layer list instead of the timeline (background, pictures, text, effects), tools "เพิ่มรูป", "ข้อความ", "ทำตามต้นแบบ", "อัตราส่วน", "เอฟเฟกต์"; on a layer: replace, place, crop, filter, adjust, cut out the background, quality, delete. The background always fills the frame (after a new photo or a new shape). Export saves a JPEG (720p = 1280 × 720) to the gallery album Pictures/Editor, or shares it.
+- **ทำตามรูปต้นแบบ**: the picture's shape, its person (a slot that cuts out whoever is put in), its big text (position, size, letter and outline colours) and, once the background is a real photo, its colours. Checked by making a thumbnail by hand (person at 0.74, 0.55; yellow "TOP 5" outlined in black at 0.27, 0.30), saving it, and using it as the reference: the slot came out at 0.72, 0.56 and the text at 0.27, 0.28, yellow (#f7d24f) outlined in near-black (#181a25).
+- Checked: 71 unit tests (text spots and colours on a synthetic thumbnail with a texture and a person that must not count, the person box, frame shapes, the layout put into a project); the thumbnail e2e (make, save, copy, fill, save) and the clip suites again, zero errors.
+
 ## 2026-10-13 — smart tools: beats, silences, auto captions, cutout, tracking, reframe, effect layers (parity 83.9, must-haves 33 of 34)
 
 | ID | status | missing | harder than expected |

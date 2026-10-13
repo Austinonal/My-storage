@@ -21,6 +21,7 @@ export interface Project {
   assets: Record<Id, MediaAsset>;
   tracks: Track[]; // tracks[0] is the main video track
   transitions: Transition[];
+  still?: { reference?: Id }; // a thumbnail: one picture at time 0, saved as an image; `reference` is the image it copies
 }
 
 export interface MediaAsset {

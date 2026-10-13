@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Ellipsis, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Copy, Ellipsis, Film, Image as ImageIcon, Pencil, Plus, ScanSearch, Trash2 } from 'lucide-react';
 import { BottomSheet, Button, DraftCard, TopBar } from '../ui';
 import { createProject, deleteProject, duplicateProject, listProjects, renameProject } from '../store';
 import { coverOf } from '../thumbs';
 import { ImportError, deleteProjectMedia, importMedia } from '../media';
-import { addMedia, formatTime, newProject, projectDuration } from '../timeline.ts';
+import { addMedia, applyLayout, formatTime, newProject, newThumbnail, projectDuration } from '../timeline.ts';
+import { analyzeThumbnail, layoutAssets } from '../thumbnail';
+import { placeholderFile } from './TemplateSheet';
 import type { Project } from '../schema';
 
 const importMessages: Record<ImportError['code'], string> = {
@@ -109,76 +111,139 @@ function Manage({ p, onClose, onChanged }: { p: Project | null; onClose: () => v
   );
 }
 
-export function Home() {
+// The first screen: choose clips or thumbnails, then a project of that kind or a new one.
+export function Home({ mode }: { mode: 'clips' | 'thumbs' }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const picker = useRef<HTMLInputElement>(null);
+  const referencePicker = useRef<HTMLInputElement>(null);
   const [manage, setManage] = useState<Project | null>(null);
+  const thumbs = mode === 'thumbs';
 
   const reload = () => listProjects().then(setProjects, (e) => setError(`โหลดโปรเจกต์ไม่สำเร็จ (${e})`));
   useEffect(() => {
     void reload();
   }, []);
 
-  async function onPick(files: File[]) {
-    if (files.length === 0) return;
-    setBusy(true);
+  // Every new project: media copied in, the project made, then the editor. A failure leaves nothing behind.
+  async function create(what: string, make: (id: string) => Promise<Project>) {
+    setBusy(what);
     setError('');
     const id = crypto.randomUUID();
     try {
       void navigator.storage.persist();
-      const assets = [];
-      for (const file of files) assets.push(await importMedia(id, file));
-      const p = newProject(id, files[0].name.replace(/\.[^.]+$/, ''), assets[0], new Date().toISOString());
-      addMedia(p, assets.slice(1));
-      await createProject(p);
+      await createProject(await make(id));
       location.hash = `#/edit/${id}`;
     } catch (e) {
       await deleteProjectMedia(id);
       setError(importMessage(e));
     } finally {
-      setBusy(false);
-      if (picker.current) picker.current.value = '';
+      setBusy('');
     }
   }
+
+  const now = () => new Date().toISOString();
+  const nameOf = (f: File) => f.name.replace(/\.[^.]+$/, '');
+
+  function onPick(files: File[]) {
+    if (files.length === 0) return;
+    void create('กำลังนำเข้า…', async (id) => {
+      const assets = [];
+      for (const file of files) assets.push(await importMedia(id, file));
+      if (thumbs) {
+        if (assets[0].kind !== 'photo') throw new ImportError('bad-image');
+        return newThumbnail(id, nameOf(files[0]), assets[0], now());
+      }
+      const p = newProject(id, nameOf(files[0]), assets[0], now());
+      addMedia(p, assets.slice(1));
+      return p;
+    });
+  }
+
+  // A thumbnail laid out like any picture: an empty background slot, a slot for the person, text where it had text.
+  function onReference(file: File | undefined) {
+    if (!file) return;
+    void create('กำลังวิเคราะห์รูปต้นแบบ…', async (id) => {
+      const layout = await analyzeThumbnail(file);
+      const background = { ...(await importMedia(id, await placeholderFile(layout.aspect))), placeholder: true };
+      const p = newThumbnail(id, `ตามแบบ ${nameOf(file)}`, background, now());
+      const { reference, slot } = await layoutAssets(id, file, layout);
+      applyLayout(p, layout, reference, slot);
+      return p;
+    });
+  }
+
+  const shown = projects?.filter((p) => !!p.still === thumbs);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-(--size-sheet-width) flex-col">
       <TopBar title="โปรเจกต์ของฉัน" />
       <main className="flex flex-1 flex-col gap-6 px-4 pb-[calc(2rem+var(--safe-bottom))]">
-        <Button loading={busy} onClick={() => picker.current?.click()}>
-          {!busy && <Plus size={20} aria-hidden />}
-          {busy ? 'กำลังนำเข้า…' : 'โปรเจกต์ใหม่'}
-        </Button>
+        <nav aria-label="จะทำอะไร" className="grid grid-cols-2 gap-2">
+          {(
+            [
+              ['clips', '#/', Film, 'ตัดต่อคลิป'],
+              ['thumbs', '#/thumbs', ImageIcon, 'ทำปก (Thumbnail)'],
+            ] as const
+          ).map(([m, href, Icon, label]) => (
+            <a
+              key={m}
+              href={href}
+              aria-current={mode === m ? 'page' : undefined}
+              className={`flex h-16 items-center justify-center gap-2 rounded-md text-sm font-semibold ${mode === m ? 'bg-accent text-on-accent' : 'bg-raised text-fg'} focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
+            >
+              <Icon size={20} aria-hidden /> {label}
+            </a>
+          ))}
+        </nav>
+        <div className="flex flex-col gap-2">
+          <Button loading={busy !== ''} onClick={() => picker.current?.click()}>
+            {!busy && <Plus size={20} aria-hidden />}
+            {busy || (thumbs ? 'ปกใหม่จากรูป' : 'โปรเจกต์ใหม่')}
+          </Button>
+          {thumbs && !busy && (
+            <Button variant="secondary" onClick={() => referencePicker.current?.click()}>
+              <ScanSearch size={20} aria-hidden /> ทำตามรูปต้นแบบ
+            </Button>
+          )}
+          {thumbs && <p className="text-xs text-muted">“ทำตามรูปต้นแบบ”: เลือกปกที่ชอบ แอปจะดูว่าคนกับข้อความอยู่ตรงไหน สีอะไร แล้ววางช่องให้ใส่รูปและข้อความของคุณ</p>}
+        </div>
         <input
           ref={picker}
           type="file"
-          accept="video/*,image/*"
-          multiple
+          accept={thumbs ? 'image/*' : 'video/*,image/*'}
+          multiple={!thumbs}
           hidden
-          aria-label="เลือกวิดีโอหรือรูป"
-          onChange={(e) => void onPick([...(e.target.files ?? [])])}
+          aria-label={thumbs ? 'เลือกรูปพื้นหลัง' : 'เลือกวิดีโอหรือรูป'}
+          onChange={(e) => {
+            onPick([...(e.target.files ?? [])]);
+            e.target.value = '';
+          }}
         />
+        <input ref={referencePicker} type="file" accept="image/*" hidden aria-label="เลือกรูปต้นแบบ" onChange={(e) => {
+          onReference(e.target.files?.[0]);
+          e.target.value = '';
+        }} />
         {error && (
           <p role="alert" className="text-sm text-danger">
             {error}
           </p>
         )}
-        {projects === null ? (
+        {!shown ? (
           <div aria-busy className="grid grid-cols-2 gap-4">
             <div className="aspect-video animate-pulse rounded-md bg-raised" />
             <div className="aspect-video animate-pulse rounded-md bg-raised" />
           </div>
-        ) : projects.length === 0 ? (
-          <p className="py-12 text-center text-sm text-muted">ยังไม่มีโปรเจกต์ กด “โปรเจกต์ใหม่” แล้วเลือกวิดีโอหรือรูปในเครื่องได้เลย</p>
+        ) : shown.length === 0 ? (
+          <p className="py-12 text-center text-sm text-muted">{thumbs ? 'ยังไม่มีปก กด “ปกใหม่จากรูป” หรือ “ทำตามรูปต้นแบบ”' : 'ยังไม่มีโปรเจกต์ กด “โปรเจกต์ใหม่” แล้วเลือกวิดีโอหรือรูปในเครื่องได้เลย'}</p>
         ) : (
           <ul className="grid grid-cols-2 gap-4">
-            {projects.map((p) => (
+            {shown.map((p) => (
               <li key={p.id} className="relative min-w-0">
                 <DraftCard
                   name={p.name}
-                  duration={formatTime(projectDuration(p))}
+                  duration={p.still ? p.aspect : formatTime(projectDuration(p))}
                   updated={new Date(p.updatedAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
                   cover={<Cover p={p} />}
                   onOpen={() => (location.hash = `#/edit/${p.id}`)}

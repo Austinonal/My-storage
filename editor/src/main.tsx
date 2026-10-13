@@ -17,7 +17,7 @@ function App() {
   if (hash === '#/design') return <DesignPage />;
   if (route === 'edit' && id) return <Editor id={id} />;
   if (route === 'export' && id) return <ExportScreen id={id} />;
-  return <Home />;
+  return <Home mode={route === 'thumbs' ? 'thumbs' : 'clips'} />;
 }
 
 createRoot(document.getElementById('root')!).render(

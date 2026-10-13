@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Button, CategoryTabs, ProgressPanel, TopBar } from '../ui';
 import { openProject, useEditor } from '../store';
-import { ExportError, exportProject } from '../export';
+import { ExportError, exportProject, exportStill } from '../export';
 import { outputSize } from '../timeline.ts';
-import { canShare, saveVideo, shareVideo } from '../save';
+import { canShare, saveExport, shareExport } from '../save';
 import type { ExportSettings, Fps } from '../schema';
 
 const RES: Record<string, ExportSettings['height']> = { '720p': 720, '1080p': 1080, '2K': 1440, '4K': 2160 };
@@ -25,7 +25,7 @@ function exportMessage(e: unknown) {
 export function ExportScreen({ id }: { id: string }) {
   const { project } = useEditor();
   const [found, setFound] = useState<boolean | null>(null);
-  const [height, setHeight] = useState<ExportSettings['height']>(1080);
+  const [height, setHeight] = useState<ExportSettings['height']>(project?.id === id && project.still ? 720 : 1080); // thumbnails: 1280 x 720
   const [fps, setFps] = useState<Fps | null>(null);
   const [job, setJob] = useState<Job>({ state: 'idle' });
   const [saved, setSaved] = useState('');
@@ -49,6 +49,7 @@ export function ExportScreen({ id }: { id: string }) {
     // Android pauses a backgrounded app, which stalls the export, so keep the screen on.
     const lock = await navigator.wakeLock?.request('screen').catch(() => undefined);
     try {
+      if (p.still) return setJob({ state: 'done', file: await exportStill(p, height) });
       const file = await exportProject(
         p,
         { height, fps: fps ?? p.fps, bitrate: 'high', codec: 'avc' },
@@ -69,7 +70,7 @@ export function ExportScreen({ id }: { id: string }) {
   async function save(file: File) {
     setSaved('กำลังบันทึก…');
     try {
-      const where = await saveVideo(file, p?.name ?? 'video');
+      const where = await saveExport(file, p?.name ?? 'video');
       setSaved(where ? `บันทึกแล้วที่ ${where}` : '');
     } catch (e) {
       setSaved(`บันทึกไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`);
@@ -77,7 +78,9 @@ export function ExportScreen({ id }: { id: string }) {
   }
 
   // One File per finished export, so the APK copies it to its cache once for both save and share.
-  const file = useMemo(() => (job.state === 'done' ? new File([job.file], `${p?.name ?? 'video'}.mp4`, { type: 'video/mp4' }) : null), [job, p?.name]);
+  const file = useMemo(() => (job.state !== 'done' ? null : p?.still ? job.file : new File([job.file], `${p?.name ?? 'video'}.mp4`, { type: 'video/mp4' })), [job, p?.name, p?.still]);
+  const picture = useMemo(() => (p?.still && file ? URL.createObjectURL(file) : null), [file, p?.still]);
+  useEffect(() => () => void (picture && URL.revokeObjectURL(picture)), [picture]);
 
   if (found === false) {
     return <p className="p-8 text-center text-sm text-muted">ไม่พบโปรเจกต์นี้</p>;
@@ -95,7 +98,7 @@ export function ExportScreen({ id }: { id: string }) {
             <ArrowLeft size={20} aria-hidden />
           </Button>
         }
-        title="ส่งออกวิดีโอ"
+        title={p?.still ? 'ส่งออกรูปปก' : 'ส่งออกวิดีโอ'}
       />
       <main className="flex flex-col gap-6 px-4 pb-[calc(2rem+var(--safe-bottom))]">
         <fieldset disabled={busy} className="flex flex-col gap-2">
@@ -105,17 +108,17 @@ export function ExportScreen({ id }: { id: string }) {
             {w} × {h}
           </p>
         </fieldset>
-        <fieldset disabled={busy} className="flex flex-col gap-2">
+        {!p?.still && <fieldset disabled={busy} className="flex flex-col gap-2">
           <legend className="text-sm">เฟรมเรต (fps)</legend>
           <CategoryTabs
             items={['24', '25', '30', '50', '60']}
             value={String(fps ?? p?.fps ?? 30)}
             onChange={(v) => setFps(Number(v) as Fps)}
           />
-        </fieldset>
+        </fieldset>}
 
-        {p && (p.tracks[0].clips as { assetId: string }[]).some((c) => p.assets[c.assetId].placeholder) && (
-          <p role="alert" className="text-sm text-warning">ยังมีช่องว่างในโปรเจกต์ ช่องนั้นจะออกมาเป็นภาพว่างในวิดีโอ</p>
+        {p && p.tracks.some((t) => t.clips.some((c) => (c.kind === 'video' || c.kind === 'photo') && p.assets[c.assetId].placeholder)) && (
+          <p role="alert" className="text-sm text-warning">ยังมีช่องว่างในโปรเจกต์ ช่องนั้นจะออกมาเป็นภาพว่าง{p.still ? 'ในรูป' : 'ในวิดีโอ'}</p>
         )}
         {job.state === 'idle' && (
           <Button disabled={!p} onClick={() => void start()}>
@@ -137,6 +140,7 @@ export function ExportScreen({ id }: { id: string }) {
         {job.state === 'failed' && (
           <ProgressPanel title="ส่งออกไม่สำเร็จ" value={0} state="failed" message={job.message} actions={<Button onClick={() => void start()}>ลองอีกครั้ง</Button>} />
         )}
+        {picture && <img src={picture} alt="รูปปกที่ส่งออก" className="w-full rounded-md" />}
         {job.state === 'done' && file && (
           <ProgressPanel
             title="ส่งออกเสร็จแล้ว"
@@ -149,7 +153,7 @@ export function ExportScreen({ id }: { id: string }) {
                 {shareable && (
                   <Button
                     variant="secondary"
-                    onClick={() => void shareVideo(file, p?.name ?? 'video').catch((e) => setSaved(`แชร์ไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`))}
+                    onClick={() => void shareExport(file, p?.name ?? 'video').catch((e) => setSaved(`แชร์ไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`))}
                   >
                     แชร์
                   </Button>
