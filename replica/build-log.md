@@ -2,6 +2,19 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — clip animations In / Out / Combo (S24)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| S24 Clip animations | done | the original's art/particle presets (fire, hearts, magic, liquid glass, 3D phone): need WebGL and our own artwork | the duration slider's minimum (one frame) was off its 0.1 s step grid, so every value snapped by 0.033 s; fixed |
+
+- Research in `replica/animations.md`: the original has 251 In, 219 Out, 108 Combo clip presets (most In/Out ones paid and asset-based).
+- Ours: **181 presets (60 In, 51 Out, 70 Combo)**, every motion mechanism the original uses (slide, swing, turn, zoom, spin, shake, pendulum, flip, jelly, blur, black-and-white, flash, negative, mosaic, glitch strips, blinds, wiper, curtain, circle, diagonal, split screens, clones, trains, stacks, cube).
+- Engine: `anim.ts` (poses, easings, presets) + `render.ts` (one Canvas 2D compositor). The editor preview is now a canvas drawn by the same compositor as the export, so what you see is what exports. PixiJS is no longer needed for this; revisit only for LUT filters and shader effects.
+- Rules: In starts on the first frame, Out ends on the last, Combo replaces both; picking one clears the other; durations clamp to the clip and squeeze proportionally when the clip is trimmed.
+- Checked: 14 unit tests (every preset finite everywhere, every In ends exactly at rest, every Out starts at rest); e2e in Chromium (preview dims during zoom-in and returns, combo clears In, duration slider exact, export contains the animation: brightness 22 → 125 over the 0.5 s zoom-in and 103 → 20 over the 1 s fade-out); zero console errors; the slice e2e still passes.
+- Text In / Out / Loop (typewriter, per-letter) reuse this engine when text layers are built.
+
 ## 2026-10-13 — shell + vertical slice (parity 11.8, must-haves 4 of 34)
 
 | ID | status | missing | harder than expected |

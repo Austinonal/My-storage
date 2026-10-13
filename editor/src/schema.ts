@@ -78,6 +78,9 @@ export interface MediaClip extends ClipBase {
   crop: { x: number; y: number; w: number; h: number; rotate: 0 | 90 | 180 | 270; mirror: boolean };
   filter: { presetId: string; intensity: number } | null; // intensity 0..1
   adjust: Adjust;
+  animIn: Anim | null; // starts on the first frame
+  animOut: Anim | null; // ends on the last frame
+  animCombo: Anim | null; // from the first frame, exclusive with animIn / animOut
 }
 
 export interface Adjust {

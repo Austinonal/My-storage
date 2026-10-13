@@ -19,7 +19,7 @@ Reverse clip,clip,must,yes,no,source 21
 Freeze frame,clip,should,yes,no,Play listing
 Crop rotate mirror,clip,must,yes,no,S23
 Clip volume and mute,clip,must,yes,no,
-Clip In Out Combo animations,clip,should,yes,no,S24 our own presets
+Clip In Out Combo animations,clip,should,yes,yes,"181 own presets (60 in / 51 out / 70 combo), live tile previews, duration slider; art/particle presets not built (see replica/animations.md)"
 Stabilize,clip,could,yes,no,heavy compute
 Keyframes for position scale rotation opacity,keyframes,must,yes,no,Play listing source 6
 Keyframe easing curves,keyframes,should,yes,no,

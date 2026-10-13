@@ -16,6 +16,7 @@ import {
 import type { ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
+import { renderFrame } from './render';
 
 export class ExportError extends Error {
   constructor(readonly code: 'no-video-encoder') {
@@ -37,7 +38,7 @@ export async function exportProject(
   const videoCodec = await getFirstEncodableVideoCodec(prefer, { width, height, frameRate: s.fps, quality: quality[s.bitrate] });
   if (!videoCodec) throw new ExportError('no-video-encoder');
 
-  // shortcut: only the main track's video clips are rendered; overlays, text and audio tracks join with the Pixi compositor.
+  // shortcut: only the main track's video clips are rendered; overlays, text and audio tracks come with those features.
   const clips = p.tracks[0].clips as MediaClip[];
   const total = projectDuration(p);
   const wantsAudio = !p.tracks[0].muted && clips.some((c) => p.assets[c.assetId].hasAudio && c.volume > 0);
@@ -58,7 +59,6 @@ export async function exportProject(
     if (audio) await audio.add(await mixAudio(p, clips, total));
     const frames = Math.max(1, Math.round((total / SEC) * s.fps));
     const frameTime = (i: number) => Math.round((i * SEC) / s.fps);
-    const background = p.canvas.kind === 'colour' ? p.canvas.colour : '#000000';
     let i = 0;
     for (const clip of clips) {
       const asset = p.assets[clip.assetId];
@@ -73,9 +73,7 @@ export async function exportProject(
         let n = i - timestamps.length;
         for await (const frame of sink.canvasesAtTimestamps(timestamps)) {
           signal.throwIfAborted();
-          ctx.fillStyle = background;
-          ctx.fillRect(0, 0, width, height);
-          if (frame) ctx.drawImage(frame.canvas, box.x, box.y);
+          renderFrame(ctx, width, height, p, clip, frame?.canvas ?? null, frameTime(n) - clip.start);
           await video.add(n / s.fps, 1 / s.fps);
           onProgress(++n / frames);
         }

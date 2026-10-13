@@ -75,11 +75,13 @@ export function BottomSheet({
   open,
   title,
   onClose,
+  dim = true,
   children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
+  dim?: boolean; // false keeps the preview behind the sheet fully visible
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -95,17 +97,17 @@ export function BottomSheet({
       aria-labelledby={titleId}
       onClose={onClose}
       onClick={(e) => e.target === e.currentTarget && onClose()} // tap on the backdrop closes
-      className="mx-auto mt-auto mb-0 max-h-(--size-sheet-max) w-full max-w-(--size-sheet-width) rounded-t-lg bg-surface p-0 text-fg shadow-sheet backdrop:bg-scrim/50"
+      className={`mx-auto mt-auto mb-0 max-h-(--size-sheet-max) w-full max-w-(--size-sheet-width) flex-col rounded-t-lg bg-surface p-0 text-fg shadow-sheet open:flex ${dim ? 'backdrop:bg-scrim/50' : 'backdrop:bg-transparent'}`}
     >
-      <div className="flex h-12 items-center justify-between pl-4">
+      <div className="flex h-12 shrink-0 items-center justify-between pl-4">
         <h2 id={titleId} className="text-base font-semibold">
           {title}
         </h2>
         <Button variant="ghost" size="md" onClick={onClose}>
-          Done
+          เสร็จ
         </Button>
       </div>
-      <div className="overflow-y-auto px-4 pb-4">{children}</div>
+      <div className="min-h-0 overflow-y-auto px-4 pb-4">{children}</div>
     </dialog>
   );
 }
@@ -182,12 +184,12 @@ export function PresetTile({
   onClick: () => void;
 }) {
   return (
-    <button aria-pressed={selected} onClick={onClick} className={`flex w-16 flex-col items-center gap-1 text-xs ${focus}`}>
+    <button aria-pressed={selected} onClick={onClick} className={`flex w-full flex-col items-center gap-1 text-xs ${focus}`}>
       <span className={`relative grid size-16 place-items-center overflow-hidden rounded-md bg-raised ${selected ? 'ring-2 ring-accent' : ''}`}>
         {none ? <Ban size={24} aria-hidden className="text-muted" /> : thumb}
         {selected && <Check size={16} aria-hidden className="absolute top-1 right-1 rounded-pill bg-accent text-on-accent" />}
       </span>
-      <span className="w-full truncate text-center">{label}</span>
+      <span className="line-clamp-2 min-h-8 w-full text-center">{label}</span>
     </button>
   );
 }

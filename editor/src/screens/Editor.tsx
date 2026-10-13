@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Pause, Play, Redo2, Undo2, Upload } from 'lucide-react';
-import { Button, Slider, TopBar } from '../ui';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowLeft, Pause, Play, Redo2, Sparkles, Undo2, Upload } from 'lucide-react';
+import { BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { openMedia } from '../media';
+import { renderFrame } from '../render';
 import { FRAME_NUDGE, SEC, formatTime, sourceOut, trimClip } from '../timeline.ts';
+import type { Slot } from '../anim.ts';
+import { AnimationSheet, type Still } from './AnimationSheet';
 import type { MediaClip } from '../schema';
+
+const SLOT_KEY = { in: 'animIn', out: 'animOut', combo: 'animCombo' } as const;
 
 function Message({ children }: { children: ReactNode }) {
   return (
@@ -30,7 +35,12 @@ export function Editor({ id }: { id: string }) {
   const [src, setSrc] = useState<string>();
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  const [sheet, setSheet] = useState(false);
+  const [still, setStill] = useState<Still | null>(null);
+  const [pendingPlay, setPendingPlay] = useState<Slot | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stopAt = useRef(0);
 
   useEffect(() => {
     setStatus('loading');
@@ -63,22 +73,47 @@ export function Editor({ id }: { id: string }) {
   const inS = clip ? clip.sourceIn / SEC : 0;
   const outS = clip ? sourceOut(clip) / SEC : 0;
 
+  const draw = useCallback(() => {
+    const v = videoRef.current;
+    const cv = canvasRef.current;
+    if (!v || !cv || !p || !clip) return;
+    const t = Math.min(clip.duration, Math.max(0, Math.round(((v.currentTime - FRAME_NUDGE - inS) * SEC) / clip.speed)));
+    renderFrame(cv.getContext('2d')!, cv.width, cv.height, p, clip, v.readyState >= 2 ? v : null, t);
+  }, [p, clip, inS]);
+  const drawRef = useRef(draw);
+  useEffect(() => {
+    drawRef.current = draw;
+    if (!playing) draw();
+  });
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const ro = new ResizeObserver(() => {
+      const r = cv.getBoundingClientRect();
+      cv.width = Math.max(1, Math.round(r.width * devicePixelRatio));
+      cv.height = Math.max(1, Math.round(r.height * devicePixelRatio));
+      drawRef.current();
+    });
+    ro.observe(cv);
+    return () => ro.disconnect();
+  }, [src]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !playing) return;
-    let handle = 0;
-    const tick = () => {
-      if (v.currentTime >= outS) {
+    let raf = requestAnimationFrame(function loop() {
+      if (v.currentTime >= stopAt.current) {
         v.pause();
-        v.currentTime = outS;
+        v.currentTime = stopAt.current;
         return;
       }
+      drawRef.current();
       setTime((v.currentTime - inS) * SEC);
-      handle = v.requestVideoFrameCallback(tick);
-    };
-    handle = v.requestVideoFrameCallback(tick);
-    return () => v.cancelVideoFrameCallback(handle);
-  }, [playing, inS, outS]);
+      raf = requestAnimationFrame(loop);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [playing, inS]);
 
   function seek(s: number) {
     const v = videoRef.current;
@@ -88,17 +123,51 @@ export function Editor({ id }: { id: string }) {
     setTime((s - inS) * SEC);
   }
 
-  async function togglePlay() {
+  async function playRange(from: number, to: number) {
     const v = videoRef.current;
     if (!v) return;
-    if (playing) return v.pause();
-    if (v.currentTime < inS || v.currentTime >= outS - 0.05) v.currentTime = inS + FRAME_NUDGE;
+    stopAt.current = to;
+    v.currentTime = from + FRAME_NUDGE;
     try {
       await v.play();
       setPlaying(true);
     } catch {
       setPlaying(false);
     }
+  }
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (playing) return v.pause();
+    const from = v.currentTime < inS || v.currentTime >= outS - 0.05 ? inS : v.currentTime - FRAME_NUDGE;
+    void playRange(from, outS);
+  }
+
+  // Tapping a preset plays just that animation once, after the edit has landed.
+  useEffect(() => {
+    if (!pendingPlay || !clip) return;
+    setPendingPlay(null);
+    const a = clip[SLOT_KEY[pendingPlay]];
+    if (!a) return;
+    const span = (a.duration * clip.speed) / SEC;
+    const from = pendingPlay === 'out' ? outS - span : inS;
+    void playRange(from, Math.min(outS, from + span));
+  }, [pendingPlay, clip, inS, outS]);
+
+  function openAnimations() {
+    const v = videoRef.current;
+    if (v && v.readyState >= 2 && clip && p) {
+      const a = p.assets[clip.assetId];
+      const w = 160;
+      const h = Math.max(1, Math.round((w * a.height) / a.width));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      c.getContext('2d')!.drawImage(v, 0, 0, w, h);
+      setStill({ img: c, w, h });
+    }
+    setSheet(true);
   }
 
   if (status === 'not-found') return <Message>ไม่พบโปรเจกต์นี้ อาจถูกลบไปแล้ว</Message>;
@@ -125,26 +194,23 @@ export function Editor({ id }: { id: string }) {
       />
 
       <div className="flex min-h-0 flex-1 items-center justify-center p-2 [container-type:size]">
-        <div
-          style={{
-            width: `min(100cqw, 100cqh * ${a / b})`,
-            aspectRatio: `${a} / ${b}`,
-            background: p?.canvas.kind === 'colour' ? p.canvas.colour : undefined,
-          }}
-          className={p && src ? '' : 'animate-pulse rounded-md bg-raised'}
-        >
+        <div style={{ width: `min(100cqw, 100cqh * ${a / b})`, aspectRatio: `${a} / ${b}` }} className={p && src ? '' : 'animate-pulse rounded-md bg-raised'}>
           {src && (
-            <video
-              ref={videoRef}
-              src={src}
-              aria-label="ตัวอย่างวิดีโอ"
-              className="size-full object-contain"
-              playsInline
-              preload="auto"
-              onLoadedMetadata={() => seek(inS)}
-              onPause={() => setPlaying(false)}
-              onEnded={() => setPlaying(false)}
-            />
+            <>
+              <canvas ref={canvasRef} role="img" aria-label="ตัวอย่างวิดีโอ" className="size-full" />
+              <video
+                ref={videoRef}
+                src={src}
+                className="hidden"
+                playsInline
+                preload="auto"
+                onLoadedMetadata={() => seek(inS)}
+                onLoadedData={() => drawRef.current()}
+                onSeeked={() => drawRef.current()}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+              />
+            </>
           )}
         </div>
       </div>
@@ -159,7 +225,7 @@ export function Editor({ id }: { id: string }) {
         <span className="flex-1 text-center font-mono text-xs text-muted">
           {formatTime(time)} / {formatTime(clip?.duration ?? 0)}
         </span>
-        <Button variant="ghost" size="md" aria-label={playing ? 'หยุด' : 'เล่น'} disabled={!src} onClick={() => void togglePlay()}>
+        <Button variant="ghost" size="md" aria-label={playing ? 'หยุด' : 'เล่น'} disabled={!src} onClick={togglePlay}>
           {playing ? <Pause size={20} aria-hidden /> : <Play size={20} aria-hidden />}
         </Button>
       </div>
@@ -194,6 +260,14 @@ export function Editor({ id }: { id: string }) {
           </>
         )}
       </section>
+
+      <BottomToolbar label="เครื่องมือ">
+        <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet} disabled={!src} onClick={openAnimations} />
+      </BottomToolbar>
+
+      {p && clip && (
+        <AnimationSheet open={sheet} onClose={() => setSheet(false)} clip={clip} still={still} onPlay={setPendingPlay} />
+      )}
     </div>
   );
 }

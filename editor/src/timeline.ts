@@ -22,6 +22,9 @@ export function newProject(id: string, name: string, asset: MediaAsset, now: str
     crop: { x: 0, y: 0, w: 1, h: 1, rotate: 0, mirror: false },
     filter: null,
     adjust: { brightness: 0, contrast: 0, saturation: 0, exposure: 0, sharpen: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0 },
+    animIn: null,
+    animOut: null,
+    animCombo: null,
   };
   return {
     version: SCHEMA_VERSION,
@@ -63,7 +66,41 @@ export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us)
     c.duration = Math.floor((e - c.sourceIn) / c.speed);
   }
   c.keyframes = c.keyframes.filter((k) => k.at >= 0 && k.at <= c.duration);
+  if (c.kind !== 'audio') fitAnims(c);
   normalize(p);
+}
+
+// A shorter clip squeezes its animations proportionally instead of dropping them.
+function fitAnims(c: MediaClip) {
+  if (c.animCombo) c.animCombo.duration = Math.min(c.animCombo.duration, c.duration);
+  const total = (c.animIn?.duration ?? 0) + (c.animOut?.duration ?? 0);
+  if (total <= c.duration) return;
+  const k = c.duration / total;
+  if (c.animIn) c.animIn.duration = Math.floor(c.animIn.duration * k);
+  if (c.animOut) c.animOut.duration = Math.floor(c.animOut.duration * k);
+}
+
+const slotKey = { in: 'animIn', out: 'animOut', combo: 'animCombo' } as const;
+
+// The animation just chosen wins: Combo clears In/Out (and the reverse), and an In/Out that no longer fits beside it shrinks.
+export function setAnim(p: Project, clipId: string, slot: 'in' | 'out' | 'combo', presetId: string | null, duration: Us) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' && c.kind !== 'photo') throw new Error('clip animations need a video or photo clip');
+  if (!presetId) {
+    c[slotKey[slot]] = null;
+    return;
+  }
+  const d = Math.round(clamp(duration, Math.min(frameUs(p), c.duration), c.duration));
+  c[slotKey[slot]] = { presetId, duration: d };
+  if (slot === 'combo') {
+    c.animIn = null;
+    c.animOut = null;
+    return;
+  }
+  c.animCombo = null;
+  const other = slot === 'in' ? 'animOut' : 'animIn';
+  const o = c[other];
+  if (o && o.duration + d > c.duration) c[other] = c.duration - d >= frameUs(p) ? { ...o, duration: c.duration - d } : null;
 }
 
 export function normalize(p: Project) {
@@ -92,11 +129,14 @@ export function assertValid(p: Project) {
       end = c.start + c.duration;
       if (c.duration < minDur) fail(`clip ${c.id} shorter than one frame`);
       if (c.keyframes.some((k) => k.at < 0 || k.at > c.duration)) fail(`keyframe outside clip ${c.id}`);
-      if (c.kind === 'text') {
-        if (c.animLoop && (c.animIn || c.animOut)) fail(`loop with in/out on ${c.id}`);
-        if ((c.animIn?.duration ?? 0) + (c.animOut?.duration ?? 0) > c.duration) fail(`animations longer than ${c.id}`);
-        continue;
+      if (c.kind !== 'audio') {
+        const solo = c.kind === 'text' ? c.animLoop : c.animCombo;
+        if (solo && (c.animIn || c.animOut)) fail(`${c.kind === 'text' ? 'loop' : 'combo'} together with in/out on ${c.id}`);
+        if ((c.animIn?.duration ?? 0) + (c.animOut?.duration ?? 0) > c.duration || (solo?.duration ?? 0) > c.duration) {
+          fail(`animations longer than ${c.id}`);
+        }
       }
+      if (c.kind === 'text') continue;
       const asset = p.assets[c.assetId];
       if (!asset) fail(`missing asset ${c.assetId}`);
       if (c.speed < 0.1 || c.speed > 100) fail(`speed ${c.speed} on ${c.id}`);
