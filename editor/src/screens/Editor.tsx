@@ -17,6 +17,8 @@ import {
   replaceClip,
   setAdjust,
   setFilter,
+  setGrade,
+  setMatch,
   setPhotoDuration,
   setTextTiming,
   setVolume,
@@ -325,6 +327,8 @@ export function Editor({ id }: { id: string }) {
         if (c.kind !== 'video' && c.kind !== 'photo') continue;
         setFilter(d, c.id, from.filter?.presetId ?? null, from.filter?.intensity ?? 1);
         setAdjust(d, c.id, from.adjust);
+        if (from.grade) setGrade(d, c.id, from.grade);
+        setMatch(d, c.id, from.match ?? null);
       }
     });
     setNotice('ใช้สีนี้กับทุกคลิปแล้ว');
@@ -427,7 +431,7 @@ export function Editor({ id }: { id: string }) {
               setSheet('anim');
             }} />}
             {visual && <ToolButton icon={Palette} label="ฟิลเตอร์" active={sheet === 'colour' && colourTab === 'filter'} onClick={() => openColour('filter')} />}
-            {visual && <ToolButton icon={SunMedium} label="ปรับสี" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
+            {visual && <ToolButton icon={SunMedium} label="ปรับแก้" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
             {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="ระดับเสียง" active={sheet === 'volume'} onClick={() => setSheet('volume')} />}
             <ToolButton icon={Trash2} label="ลบ" disabled={onlyMain} onClick={() => remove(sel.id)} />
           </>
@@ -463,7 +467,7 @@ export function Editor({ id }: { id: string }) {
         <AnimationSheet open={sheet === 'anim'} onClose={() => setSheet(null)} clip={animated} still={visual ? still : null} onPlay={setPendingPlay} />
       )}
       {p && visual && (
-        <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} still={still} onApplyAll={() => colourToAll(visual)} />
+        <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} still={still} onApplyAll={() => colourToAll(visual)} />
       )}
       {p && textSel && (
         <TextSheet open={sheet === 'text'} onClose={() => setSheet(null)} clip={textSel} onNext={() => newText(textSel.start + textSel.duration, textSel)} />

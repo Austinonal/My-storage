@@ -79,6 +79,8 @@ export interface MediaClip extends ClipBase {
   crop: { x: number; y: number; w: number; h: number; rotate: 0 | 90 | 180 | 270; mirror: boolean };
   filter: { presetId: string; intensity: number } | null; // intensity 0..1
   adjust: Adjust;
+  grade?: Grade; // per-colour HSL, curves, colour wheels; missing = untouched
+  match?: { lutId: string; name: string; intensity: number } | null; // colour taken from another photo or clip, intensity 0..1
   animIn: Anim | null; // starts on the first frame
   animOut: Anim | null; // ends on the last frame
   animCombo: Anim | null; // from the first frame, exclusive with animIn / animOut
@@ -94,6 +96,19 @@ export interface Adjust {
   shadows: number;
   temperature: number;
   tint: number;
+  // added later: missing in older projects means 0
+  ambient?: number;
+  clarity?: number;
+  whites?: number;
+  blacks?: number;
+  fade?: number;
+  vignette?: number;
+}
+
+export interface Grade {
+  hsl: [number, number, number][]; // 8 colours (red, orange, yellow, green, aqua, blue, purple, pink): hue, saturation, lightness, each -100..100
+  curves: Record<'rgb' | 'r' | 'g' | 'b', [number, number][]>; // points in 0..1, sorted by x, both ends included
+  wheels: Record<'shadows' | 'midtones' | 'highlights', [number, number, number]>; // x, y on the wheel (-1..1), lightness -100..100
 }
 
 export interface TextClip extends ClipBase {

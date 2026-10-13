@@ -1,10 +1,15 @@
-import { SCHEMA_VERSION, type Adjust, type Aspect, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
+import { SCHEMA_VERSION, type Adjust, type Aspect, type Grade, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
+import { CURVE_CHANNELS, HSL_COLOURS, WHEELS, neutralGrade } from './grade.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
 export const FRAME_NUDGE = 0.001;
 export const frameUs = (p: Project): Us => Math.round(SEC / p.fps);
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+export const ADJUST_KEYS: (keyof Adjust)[] = [
+  'brightness', 'contrast', 'saturation', 'exposure', 'sharpen', 'highlights', 'shadows', 'temperature', 'tint',
+  'ambient', 'clarity', 'whites', 'blacks', 'fade', 'vignette',
+];
 
 export const PHOTO_SECONDS = 3;
 
@@ -23,7 +28,7 @@ function mediaClip(asset: MediaAsset): MediaClip {
     transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0, opacity: 1 },
     crop: { x: 0, y: 0, w: 1, h: 1, rotate: 0, mirror: false },
     filter: null,
-    adjust: { brightness: 0, contrast: 0, saturation: 0, exposure: 0, sharpen: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0 },
+    adjust: Object.fromEntries(ADJUST_KEYS.map((k) => [k, 0])) as unknown as Adjust,
     animIn: null,
     animOut: null,
     animCombo: null,
@@ -221,7 +226,39 @@ export function setFilter(p: Project, clipId: string, presetId: string | null, i
 
 export function setAdjust(p: Project, clipId: string, patch: Partial<Adjust>) {
   const c = visualClip(p, clipId);
-  for (const [k, v] of Object.entries(patch) as [keyof Adjust, number][]) if (k in c.adjust) c.adjust[k] = clamp(Math.round(v), -100, 100);
+  for (const [k, v] of Object.entries(patch) as [keyof Adjust, number][]) if (ADJUST_KEYS.includes(k) && Number.isFinite(v)) c.adjust[k] = clamp(Math.round(v), -100, 100);
+}
+
+const clampPair = ([x, y]: [number, number]): [number, number] => [clamp(x, 0, 1), clamp(y, 0, 1)];
+
+// HSL, curves and wheels; anything left out of the patch stays as it was.
+export function setGrade(p: Project, clipId: string, patch: Partial<Grade>) {
+  const c = visualClip(p, clipId);
+  const g: Grade = structuredClone(c.grade ?? neutralGrade());
+  if (patch.hsl) g.hsl = HSL_COLOURS.map((_, i) => (patch.hsl![i] ?? [0, 0, 0]).map((v) => clamp(Math.round(v), -100, 100)) as [number, number, number]);
+  if (patch.curves) {
+    for (const k of CURVE_CHANNELS) {
+      const pts = patch.curves[k];
+      if (!pts) continue;
+      const inner = pts.map(clampPair).filter(([x]) => x > 0 && x < 1).sort((a, b) => a[0] - b[0]).slice(0, 14);
+      const ends = pts.map(clampPair).sort((a, b) => a[0] - b[0]);
+      g.curves[k] = [[0, ends[0]?.[0] === 0 ? ends[0][1] : 0], ...inner, [1, ends.at(-1)?.[0] === 1 ? ends.at(-1)![1] : 1]];
+    }
+  }
+  if (patch.wheels) {
+    for (const k of WHEELS) {
+      const w = patch.wheels[k];
+      if (!w) continue;
+      const r = Math.hypot(w[0], w[1]);
+      const s = r > 1 ? 1 / r : 1;
+      g.wheels[k] = [w[0] * s, w[1] * s, clamp(Math.round(w[2]), -100, 100)];
+    }
+  }
+  c.grade = g;
+}
+
+export function setMatch(p: Project, clipId: string, match: MediaClip['match']) {
+  visualClip(p, clipId).match = match ? { ...match, intensity: clamp(match.intensity, 0, 1) } : null;
 }
 
 export function setVolume(p: Project, clipId: string, volume: number) {
@@ -410,6 +447,7 @@ export function assertValid(p: Project) {
       if (c.kind !== 'photo' && (c.sourceIn < 0 || sourceOut(c) > asset.duration)) fail(`source range outside asset on ${c.id}`);
       if (c.kind !== 'audio' && c.filter && !(c.filter.intensity >= 0 && c.filter.intensity <= 1)) fail(`filter intensity on ${c.id}`);
       if (c.kind !== 'audio' && Object.values(c.adjust).some((v) => !(v >= -100 && v <= 100))) fail(`adjust out of range on ${c.id}`);
+      if (c.kind !== 'audio' && c.match && !(c.match.intensity >= 0 && c.match.intensity <= 1)) fail(`colour match intensity on ${c.id}`);
       if (c.kind === 'audio' && c.fadeIn + c.fadeOut > c.duration) fail(`fades longer than ${c.id}`);
     }
   });
