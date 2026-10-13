@@ -1,0 +1,83 @@
+feature,area,priority,original,clone,notes
+New project from gallery clips and photos,project,must,yes,no,S01-S02
+Drafts list with auto-save and reopen,project,must,yes,no,S01 F16
+Rename duplicate delete a draft,project,should,yes,no,long-press on draft card (guess)
+Missing source media warning on reopen,project,should,unknown,no,edge case of F16
+Multi-track timeline with pinch zoom and scrub,timeline,must,yes,no,Play listing
+Play pause and timecode on preview,timeline,must,yes,no,S03
+Trim clip by dragging edges,timeline,must,yes,no,F02
+Split clip at playhead,timeline,must,yes,no,Play listing
+Delete clip,timeline,must,yes,no,
+Reorder clips by drag,timeline,must,yes,no,
+Undo and redo,timeline,must,yes,no,
+Snap to playhead and clip edges,timeline,should,yes,no,guess
+Replace clip media keeping edits,clip,should,yes,no,source 18
+Speed normal 0.1x to 100x,clip,must,yes,no,Play listing
+Speed curve presets and custom curve,clip,should,yes,no,Play listing
+Optical-flow slow motion,clip,could,yes,no,needs frame interpolation
+Reverse clip,clip,must,yes,no,source 21
+Freeze frame,clip,should,yes,no,Play listing
+Crop rotate mirror,clip,must,yes,no,S23
+Clip volume and mute,clip,must,yes,no,
+Clip In Out Combo animations,clip,should,yes,no,S24 our own presets
+Stabilize,clip,could,yes,no,heavy compute
+Keyframes for position scale rotation opacity,keyframes,must,yes,no,Play listing source 6
+Keyframe easing curves,keyframes,should,yes,no,
+Keyframes on filter adjust volume mask,keyframes,could,unknown,no,guess
+Transitions between clips with duration,transitions,must,yes,no,S06
+Transition categories basic camera slide blur glitch light split distortion mask MG,transitions,should,yes,no,categories from source 5; our own presets
+Apply one transition to all cuts,transitions,could,unknown,no,not confirmed
+Add text layer with font size colour,text,must,yes,no,S09
+Text stroke shadow background,text,should,unknown,no,not confirmed but common
+Text In animations,text,must,yes,no,F05 our own presets
+Text Out animations,text,must,yes,no,F05 our own presets
+Text Loop animations,text,must,yes,no,third tab called Combo in older builds
+Animation duration slider separate from layer length,text,must,yes,no,source 24
+Thai and emoji text shaping,text,must,unknown,no,user is Thai
+Text templates,text,should,yes,no,our own templates only
+Import custom font file,text,should,yes,no,Play listing custom fonts
+Auto captions from speech,text,should,yes,no,on-device speech model; v2
+Text to speech voices,text,should,yes,no,Android TTS; v2
+Bilingual captions and filler-word removal,text,could,yes,no,
+Stickers layer,stickers,should,yes,no,our own or open-licence stickers only
+Add music from own files,audio,must,yes,no,
+Extract audio from a video,audio,must,yes,no,Play listing
+Record voiceover,audio,must,yes,no,F08
+Audio volume,audio,must,yes,no,
+Audio fade in and fade out,audio,must,yes,no,
+Audio split trim delete,audio,must,yes,no,
+Waveform on audio clips,audio,should,yes,no,
+Voice effects (pitch robot chipmunk etc),audio,should,yes,no,source 12
+Noise reduction,audio,should,yes,no,
+Beat markers manual and auto,audio,could,yes,no,
+Audio speed with pitch preserved,audio,should,unknown,no,
+Filters with intensity,colour,must,yes,no,S17 our own LUTs
+Adjust brightness contrast saturation exposure,colour,must,yes,no,S18
+Adjust sharpen highlights shadows temperature tint,colour,should,yes,no,S18
+HSL and curves,colour,could,yes,no,
+Apply filter or adjust to all clips or as a timeline layer,colour,should,yes,no,
+Video effects (glitch blur VHS light leak shake zoom),effects,should,yes,no,our own shaders; v2
+Body effects that follow a person,effects,could,yes,no,needs segmentation model
+Overlay picture-in-picture,overlay,should,yes,no,v2
+Opacity and blend modes,overlay,should,yes,no,v2
+Mask shapes with feather and invert,overlay,should,yes,no,v2
+Chroma key,overlay,should,yes,no,Play listing; v2
+Auto background removal,overlay,could,yes,no,needs segmentation model
+Aspect ratio presets 9:16 16:9 1:1 3:4 4:3,canvas,must,yes,no,S19
+Canvas colour and blur background,canvas,must,yes,no,S20
+Canvas image background,canvas,could,yes,no,
+Export 720p and 1080p,export,must,yes,no,S26
+Export 2K and 4K,export,should,yes,no,phone-dependent
+Export frame rate 24 25 30 50 60,export,must,yes,no,
+Export bitrate low medium high,export,should,yes,no,
+Export progress cancel and save to gallery,export,must,yes,no,S27
+Share sheet after export,export,should,yes,no,
+Music and sound-effect library,audio,skip,yes,skip,licensed catalogue
+CapCut preset packs (their effects filters stickers fonts templates),assets,skip,yes,skip,owned assets; we make our own
+Templates tab and template community,templates,skip,yes,skip,user content and network
+AI effects and AI voices,ai,skip,yes,skip,ByteDance models
+Cloud space and cross-device sync,account,skip,yes,skip,not needed offline
+Account login and Me tab,account,skip,yes,skip,not needed for a personal app
+TikTok direct post,sharing,skip,yes,skip,partner integration; share sheet covers it
+Pro subscription and paywall,payments,skip,yes,skip,personal app has no paywall; never bypass the real one
+Watermark and ending clip,export,skip,yes,skip,not needed
