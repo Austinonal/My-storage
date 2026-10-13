@@ -83,6 +83,9 @@ export interface MediaClip extends ClipBase {
   adjust: Adjust;
   grade?: Grade; // per-colour HSL, curves, colour wheels; missing = untouched
   match?: { lutId: string; name: string; intensity: number } | null; // colour taken from another photo or clip, intensity 0..1
+  fadeIn?: Us; // the clip's own sound
+  fadeOut?: Us;
+  voice?: Voice | null;
   quality?: { enhance: { lo: [number, number, number]; hi: [number, number, number] } | null; stabilize: 0 | 1 | 2; deflicker: boolean };
   animIn: Anim | null; // starts on the first frame
   animOut: Anim | null; // ends on the last frame
@@ -142,7 +145,10 @@ export interface AudioClip extends ClipBase {
   volume: number;
   fadeIn: Us;
   fadeOut: Us;
+  voice?: Voice | null;
 }
+
+export type Voice = 'high' | 'low' | 'robot' | 'echo' | 'radio';
 
 export type KeyframeProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume';
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut';

@@ -68,6 +68,11 @@ jobs:
       - run: npm run build
       # The native project is generated from the installed @capacitor/android version, not committed.
       - run: npx cap add android
+      # Voiceover records from the microphone; the WebView asks for it at run time only if the manifest declares it.
+      - name: Declare the microphone permission
+        run: |
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n</manifest>#' android/app/src/main/AndroidManifest.xml
+          grep -q RECORD_AUDIO android/app/src/main/AndroidManifest.xml
       - run: ./gradlew assembleDebug --no-daemon
         working-directory: editor/android
       - name: Publish the APK as the editor-latest release

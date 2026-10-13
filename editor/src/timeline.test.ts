@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setSpeed, setCurve, setCrop, insertFreeze, setTransition, setTransformAt, toggleKeyframe, setFades, extractAudio, setReversed, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -325,5 +325,64 @@ test('captions: many at once, styled like an existing one, overlaps go to anothe
   assert.equal(a.style.colour, '#ffd84dff');
   assert.equal(a.transform.y, 0.1);
   assert.equal(p.tracks.filter((t) => t.kind === 'text').length, 2, 'the first caption overlaps the existing text');
+  assertValid(p);
+});
+
+test('speed keeps the recording range, scales keyframes; curves keep the length', () => {
+  const p = make();
+  const v = p.tracks[0].clips[0] as MediaClip;
+  const span = v.duration * v.speed;
+  toggleKeyframe(p, v.id, v.duration);
+  setSpeed(p, v.id, 2);
+  const c = findClip(p, v.id) as MediaClip;
+  assert.equal(c.duration, span / 2);
+  assert.equal(c.keyframes[0].at, c.duration, 'keyframe moved with the clip end');
+  setSpeed(p, v.id, 1000);
+  assert.equal((findClip(p, v.id) as MediaClip).speed, 100);
+  setSpeed(p, v.id, 1);
+  const before = findClip(p, v.id).duration;
+  setCurve(p, v.id, [[0.2, 3], [0.9, 0.2]]);
+  assert.deepEqual((findClip(p, v.id) as MediaClip).curve, [[0, 3], [1, 0.2]], 'ends pinned to 0 and 1');
+  assert.equal(findClip(p, v.id).duration, before);
+  assert.throws(() => setReversed(p, v.id, true), /not made yet/);
+  assertValid(p);
+});
+
+test('transitions: between neighbours only, shortened or dropped when clips change', () => {
+  const p = make();
+  addMedia(p, [photo]);
+  const [a, b] = p.tracks[0].clips;
+  setTransition(p, a.id, 'dissolve', 99 * SEC);
+  assert.equal(p.transitions.length, 1);
+  assert.equal(p.transitions[0].duration, Math.floor(Math.min(a.duration, b.duration) / 2), 'clamped to half the shorter clip');
+  setPhotoDuration(p, b.id, 1 * SEC);
+  assert.equal(p.transitions[0].duration, 0.5 * SEC, 'follows the shorter clip');
+  assertValid(p);
+  moveClip(p, b.id, { index: 0 });
+  assert.equal(p.transitions.length, 0, 'not neighbours in that order any more');
+  assert.throws(() => setTransition(p, p.tracks[0].clips[1].id, 'dissolve', SEC), /next clip/);
+});
+
+test('keyframed transform edits, crop clamps, freeze inserts a still, fades and extracted sound', () => {
+  const p = make();
+  const v = p.tracks[0].clips[0] as MediaClip;
+  setTransformAt(p, v.id, SEC, { scale: 2 }); // no keyframes yet: the clip itself
+  assert.equal((findClip(p, v.id) as MediaClip).transform.scale, 2);
+  toggleKeyframe(p, v.id, 0);
+  setTransformAt(p, v.id, 2 * SEC, { x: 0.1 });
+  assert.equal(new Set((findClip(p, v.id) as MediaClip).keyframes.map((k) => k.at)).size, 2);
+  setCrop(p, v.id, { x: 0.9, y: -1, w: 0.5, h: 2, rotate: 450, mirror: true });
+  assert.deepEqual((findClip(p, v.id) as MediaClip).crop, { x: 0.5, y: 0, w: 0.5, h: 1, rotate: 90, mirror: true });
+  const still: MediaAsset = { ...photo, id: 'still' };
+  const f = insertFreeze(p, v.id, 1 * SEC, still);
+  const kinds = p.tracks[0].clips.map((c) => c.kind);
+  assert.deepEqual(kinds, ['video', 'photo', 'video']);
+  assert.equal(findClip(p, f).start, 1 * SEC);
+  assert.equal((findClip(p, f) as MediaClip).crop.rotate, 90, 'the still keeps the look');
+  setFades(p, v.id, 9 * SEC, 0.2 * SEC);
+  assert.equal((findClip(p, v.id) as MediaClip).fadeIn, Math.floor(findClip(p, v.id).duration / 2));
+  const a = extractAudio(p, v.id);
+  assert.equal((findClip(p, v.id) as MediaClip).volume, 0);
+  assert.equal(findClip(p, a).start, findClip(p, v.id).start);
   assertValid(p);
 });

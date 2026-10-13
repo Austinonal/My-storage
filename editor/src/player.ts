@@ -2,6 +2,8 @@ import type { AudioClip, MediaClip, Project, Us } from './schema';
 import { openMedia } from './media';
 import { overlayClips, renderFrame, visibleAt, type TextBox } from './render';
 import { fileSecondsAt, rateAt } from './timing.ts';
+import { voiceChain, type Chain } from './voice';
+import type { Voice } from './schema';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
@@ -16,6 +18,7 @@ export class Player {
   onError?: (e: unknown) => void;
   textBoxes: TextBox[] = []; // where text and overlays were drawn last, in canvas pixels
   selectedBox: string | null = null; // framed in the preview only, never in the export
+  mute = false; // silences everything, e.g. while recording a voiceover
 
   private p: Project | null = null;
   private photos = new Map<string, ImageBitmap>(); // by asset id
@@ -27,6 +30,8 @@ export class Player {
   private raf = 0;
   private clock = { at: 0, t: 0 };
   private stopAt: Us = 0;
+  private ac: AudioContext | null = null; // made on first use of a voice effect
+  private routes = new Map<HTMLMediaElement, { src: MediaElementAudioSourceNode; voice: Voice | null; chain: Chain | null }>();
 
   constructor(private canvas: HTMLCanvasElement) {
     void loadFonts().then(() => this.draw());
@@ -127,8 +132,13 @@ export class Player {
     const want = fileSecondsAt(c, asset.duration, local) + FRAME_NUDGE;
     // shortcut: media elements play at most 16x; faster parts of a clip are kept in step by seeking
     el.playbackRate = Math.min(16, Math.max(0.0625, rateAt(c, Math.min(c.duration, Math.max(0, local)))));
-    el.volume = Math.min(1, c.volume); // shortcut: preview caps volume at 100 %; the export uses the real gain
-    el.muted = muted;
+    const at = Math.min(c.duration, Math.max(0, local));
+    const fadeIn = c.fadeIn ?? 0;
+    const fadeOut = c.fadeOut ?? 0;
+    const fade = Math.min(1, fadeIn ? at / fadeIn : 1, fadeOut ? (c.duration - at) / fadeOut : 1);
+    el.volume = Math.max(0, Math.min(1, c.volume * fade)); // shortcut: preview caps volume at 100 %; the export uses the real gain
+    el.muted = muted || this.mute;
+    this.route(el, c.voice ?? null);
     if (this.playing) {
       if (Math.abs(el.currentTime - want) > 0.2) el.currentTime = want;
       if (el.paused) void el.play().catch(() => {});
@@ -136,6 +146,27 @@ export class Player {
       if (!el.paused) el.pause();
       if (Math.abs(el.currentTime - want) > 0.001) el.currentTime = want;
     }
+  }
+
+  // A voice effect needs the element's sound to go through Web Audio; once routed, an element stays routed.
+  private route(el: HTMLMediaElement, voice: Voice | null) {
+    let r = this.routes.get(el);
+    if (!r) {
+      if (!voice) return;
+      this.ac ??= new AudioContext();
+      r = { src: this.ac.createMediaElementSource(el), voice: null, chain: null };
+      r.src.connect(this.ac.destination);
+      this.routes.set(el, r);
+    }
+    if (r.voice === voice) return;
+    r.src.disconnect();
+    r.chain?.output.disconnect();
+    r.chain = voice ? voiceChain(this.ac!, voice) : null;
+    if (r.chain) {
+      r.src.connect(r.chain.input);
+      r.chain.output.connect(this.ac!.destination);
+    } else r.src.connect(this.ac!.destination);
+    r.voice = voice;
   }
 
   private sync() {
@@ -218,6 +249,7 @@ export class Player {
     if (to === undefined && this.time >= end - SEC / 100) this.time = 0;
     this.stopAt = Math.min(to ?? end, end);
     this.playing = true;
+    void this.ac?.resume();
     this.clock = { at: performance.now(), t: this.time };
     this.sync();
     const loop = () => {

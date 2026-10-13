@@ -35,6 +35,7 @@ export interface Slot {
   in: Guess | null;
   out: Guess | null;
   combo: Guess | null;
+  dissolve: number | null; // seconds of a cross-dissolve from the slot before into this one
 }
 
 export function features(rgba: Uint8ClampedArray | Uint8Array, w: number, h: number, t: number): Frame {
@@ -483,14 +484,15 @@ export function buildTemplate(f: Frame[], motions: Motion[], end: number): Slot[
     const stop = b < f.length ? f[b].t - t0 : end - t0;
     const seconds = stop - start;
     const fps = shot.length > 1 ? (shot.length - 1) / Math.max(1e-6, shot[shot.length - 1].t - shot[0].t) : 30;
-    // shortcut: a dissolve becomes a fade out + fade in (through black); real overlapping transitions need two clips drawn at once
+    // A dissolve becomes a real transition between the two slots; the mixed frames are not read as In / Out effects.
     const dIn = dissolves.find((d) => d.at === a);
     const dOut = dissolves.find((d) => d.at === b);
-    const inG = dIn ? { presetId: 'in:fade', seconds: (dIn.to - dIn.at + 1) / fps } : shot.length >= 3 ? guessEnd('in', shot, ms, fps) : null;
-    const outG = dOut ? { presetId: 'out:fade', seconds: (dOut.at - dOut.from) / fps } : shot.length >= 3 ? guessEnd('out', shot, ms, fps) : null;
+    const inG = dIn ? null : shot.length >= 3 ? guessEnd('in', shot, ms, fps) : null;
+    const outG = dOut ? null : shot.length >= 3 ? guessEnd('out', shot, ms, fps) : null;
     const combo = inG || outG ? null : guessCombo(shot, ms, fps, seconds);
     const cap = (g: Guess | null, share: number) => g && { ...g, seconds: Math.min(g.seconds, seconds * share) };
-    slots.push({ start, seconds, in: cap(inG, outG ? 0.5 : 0.9), out: cap(outG, inG ? 0.5 : 0.9), combo });
+    const dissolve = dIn ? (dIn.to - dIn.from + 1) / fps : null;
+    slots.push({ start, seconds, in: cap(inG, outG ? 0.5 : 0.9), out: cap(outG, inG ? 0.5 : 0.9), combo: dIn || dOut ? null : combo, dissolve });
   }
   return slots;
 }

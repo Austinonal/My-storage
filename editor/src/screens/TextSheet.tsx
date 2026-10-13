@@ -51,12 +51,12 @@ const POSITIONS: [string, number][] = [
   ['ล่าง', 0.82],
 ];
 
-export function TextSheet({ open, onClose, clip, onNext }: { open: boolean; onClose: () => void; clip: TextClip; onNext: () => void }) {
+export function TextSheet({ open, onClose, clip, shown, setTransform, onNext }: { open: boolean; onClose: () => void; clip: TextClip; shown: TextClip['transform']; setTransform: (patch: Partial<TextClip['transform']>, key: string) => void; onNext: () => void }) {
   const [tab, setTab] = useState<Tab>('สไตล์');
   const area = useRef<HTMLTextAreaElement>(null);
   const s = clip.style;
   const style = (patch: Partial<TextStyle>, key: string) => edit((d) => updateText(d, clip.id, { style: patch }), `text-${key}-${clip.id}`);
-  const transform = (patch: Partial<TextClip['transform']>, key: string) => edit((d) => updateText(d, clip.id, { transform: patch }), `text-${key}-${clip.id}`);
+  const transform = (patch: Partial<TextClip['transform']>, key: string) => setTransform(patch, `text-${key}-${clip.id}`); // keyframe-aware, from the editor
 
   // A new subtitle opens with its text selected, so typing replaces it.
   useEffect(() => {
@@ -122,7 +122,7 @@ export function TextSheet({ open, onClose, clip, onNext }: { open: boolean; onCl
         {tab === 'สี' && (
           <>
             <Swatches label="สีตัวอักษร" colours={COLOURS} value={rgb(s.colour)} onChange={(c) => style({ colour: withAlpha(c, alpha(s.colour)) }, 'colour')} />
-            <Slider label="ความทึบ" value={Math.round(clip.transform.opacity * 100)} min={0} max={100} step={5} format={(v) => `${v}%`} onChange={(v) => transform({ opacity: v / 100 }, 'opacity')} />
+            <Slider label="ความทึบ" value={Math.round(shown.opacity * 100)} min={0} max={100} step={5} format={(v) => `${v}%`} onChange={(v) => transform({ opacity: v / 100 }, 'opacity')} />
           </>
         )}
 
@@ -210,8 +210,8 @@ export function TextSheet({ open, onClose, clip, onNext }: { open: boolean; onCl
                 </Button>
               ))}
             </div>
-            <Slider label="หมุน" value={Math.round(clip.transform.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => transform({ rotation: v }, 'rotate')} />
-            <Slider label="ซูม" value={Math.round(clip.transform.scale * 100)} min={20} max={400} step={5} format={(v) => `${v}%`} onChange={(v) => transform({ scale: v / 100 }, 'scale')} />
+            <Slider label="หมุน" value={Math.round(shown.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => transform({ rotation: v }, 'rotate')} />
+            <Slider label="ซูม" value={Math.round(shown.scale * 100)} min={20} max={400} step={5} format={(v) => `${v}%`} onChange={(v) => transform({ scale: v / 100 }, 'scale')} />
             <p className="text-xs text-muted">บนจอตัวอย่าง: ลากเพื่อย้าย ใช้สองนิ้วเพื่อย่อ/ขยายและหมุน</p>
           </>
         )}

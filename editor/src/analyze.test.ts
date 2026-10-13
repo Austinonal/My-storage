@@ -121,7 +121,7 @@ test('rotation: a turn is measured, a slide or zoom is not a turn', () => {
 const read = (looks: Look[]) => {
   const f = clip(looks);
   const slots = buildTemplate(f, f.slice(1).map((b, i) => estimateMotion(f[i], b)), looks.length / FPS);
-  return { slots, summary: JSON.stringify(slots.map((s) => [s.start.toFixed(2), s.in?.presetId, s.out?.presetId, s.combo?.presetId])) };
+  return { slots, summary: JSON.stringify(slots.map((s) => [s.start.toFixed(2), s.in?.presetId, s.out?.presetId, s.combo?.presetId, s.dissolve])) };
 };
 
 test('template: spin in, pendulum in, slow tilt combo', () => {
@@ -148,8 +148,8 @@ test('dissolves: a cross-fade splits two shots in its middle with a fade on each
   assert.ok(Math.abs(d[0].at - 26) <= 1 && d[0].from <= 21 && d[0].to >= 30, JSON.stringify(d));
   const { slots, summary } = read(looks);
   assert.equal(slots.length, 2, summary);
-  assert.equal(slots[0].out?.presetId, 'out:fade', summary);
-  assert.equal(slots[1].in?.presetId, 'in:fade', summary);
+  assert.ok(slots[1].dissolve && Math.abs(slots[1].dissolve - 10 / FPS) < 0.15, summary);
+  assert.equal(slots[0].out, null, 'the mixed frames are not an Out effect');
   assert.ok(Math.abs(slots[1].start - 26 / FPS) < 0.05, summary);
   const fadeIn = clip([...Array.from({ length: 12 }, (_, i) => ({ seed: 1, bright: i / 12 })), ...Array(12).fill({ seed: 1 })]);
   assert.deepEqual(detectDissolves(fadeIn, FPS), []);

@@ -111,7 +111,7 @@ export function TemplateSheet({ open, onClose, project, onApplied }: { open: boo
           </p>
           <ol className="flex max-h-60 flex-col gap-1 overflow-y-auto text-xs">
             {state.slots.map((s, i) => {
-              const fx = [effectName(s.in?.presetId) && `เข้า: ${effectName(s.in?.presetId)}`, effectName(s.out?.presetId) && `ออก: ${effectName(s.out?.presetId)}`, effectName(s.combo?.presetId) && `คอมโบ: ${effectName(s.combo?.presetId)}`].filter(Boolean);
+              const fx = [s.dissolve && `ซ้อนจางจากช่องก่อน ${s.dissolve.toFixed(1)} วิ`, effectName(s.in?.presetId) && `เข้า: ${effectName(s.in?.presetId)}`, effectName(s.out?.presetId) && `ออก: ${effectName(s.out?.presetId)}`, effectName(s.combo?.presetId) && `คอมโบ: ${effectName(s.combo?.presetId)}`].filter(Boolean);
               const who = own[i] ? project.assets[own[i].assetId].name : 'ช่องว่าง';
               return (
                 <li key={i} className="flex gap-2 rounded-md bg-raised px-2 py-1">

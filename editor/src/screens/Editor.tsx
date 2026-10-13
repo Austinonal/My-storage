@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Captions, Gem, Ratio, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, Captions, Crop, Diamond, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, Swatches, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
-import { importMedia } from '../media';
+import { importMedia, storeMedia } from '../media';
+import { buildReversed } from '../reverse';
+import { keyNear, transformAt } from '../keyframes';
 import { Player } from '../player';
 import {
   SEC,
@@ -17,7 +19,13 @@ import {
   moveClip,
   projectDuration,
   replaceClip,
+  insertFreeze,
   setAdjust,
+  setKeyEasing,
+  setReversed,
+  setReversedFile,
+  setTransformAt,
+  toggleKeyframe,
   setAspect,
   setCanvas,
   setFilter,
@@ -25,8 +33,6 @@ import {
   setMatch,
   setPhotoDuration,
   setTextTiming,
-  setTransform,
-  setVolume,
   sourceOut,
   splitAt,
   trimClip,
@@ -40,11 +46,12 @@ import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
 import { CaptionSheet } from './CaptionSheet';
 import { QualitySheet } from './QualitySheet';
+import { CropSheet, SoundSheet, SpeedSheet, TransitionSheet, VoiceoverSheet } from './ClipTools';
 import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
-import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
+import type { AudioClip, Easing, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | null;
+type Sheet = 'anim' | 'trim' | 'sound' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | 'speed' | 'crop' | 'transition' | 'voiceover' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -92,6 +99,9 @@ export function Editor({ id }: { id: string }) {
   const [pendingPlay, setPendingPlay] = useState<Slot | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [busyText, setBusyText] = useState('');
+  const [transitionFrom, setTransitionFrom] = useState<string | null>(null);
+  const recorder = useRef<{ rec: MediaRecorder; chunks: Blob[]; at: number; stream: MediaStream } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<Player | null>(null);
   const visualInput = useRef<HTMLInputElement>(null);
@@ -109,6 +119,10 @@ export function Editor({ id }: { id: string }) {
   const visual = sel && (sel.kind === 'video' || sel.kind === 'photo') ? sel : null;
   const textSel = sel?.kind === 'text' ? sel : null;
   const overlaySel = visual && p && !p.tracks[0].clips.some((c) => c.id === visual.id) ? visual : null;
+  const mainSel = visual && !overlaySel ? visual : null;
+  const placed = visual ?? textSel; // clips with a position, size, turn and opacity (and keyframes)
+  const local = placed ? Math.min(placed.duration, Math.max(0, time - placed.start)) : 0;
+  const onKey = !!placed && p !== null && keyNear(placed, local, Math.round(SEC / p.fps / 2)) !== undefined;
   const animated = visual ?? textSel;
   const pointers = useRef(new Map<number, Point>());
   const drag = useRef<{ id: string; at: Point; tr: Transform; pinch: { d: number; a: number } | null; moved: boolean; key: string } | null>(null);
@@ -254,7 +268,10 @@ export function Editor({ id }: { id: string }) {
   }
 
   // Text and overlays move the same way on the preview; only the command that stores the move differs.
-  const moveBox = (d: Project, id: string, patch: Partial<Transform>) => (findClip(d, id).kind === 'text' ? updateText(d, id, { transform: patch }) : setTransform(d, id, patch));
+  const moveBox = (d: Project, id: string, patch: Partial<Transform>) => {
+    const c = findClip(d, id);
+    setTransformAt(d, id, time - c.start, patch);
+  };
 
   function hitText({ x, y }: Point) {
     const boxes = playerRef.current?.textBoxes ?? [];
@@ -271,7 +288,7 @@ export function Editor({ id }: { id: string }) {
   // Preview gestures on text: tap selects, one finger moves, two fingers scale and turn.
   function startGesture(id: string, at: Point, pinch: { d: number; a: number } | null) {
     const c = findClip(p!, id) as TextClip | MediaClip;
-    drag.current = { id, at, tr: c.transform, pinch, moved: drag.current?.moved ?? false, key: drag.current?.key ?? `text-move-${Date.now()}` };
+    drag.current = { id, at, tr: transformAt(c, Math.min(c.duration, Math.max(0, time - c.start))), pinch, moved: drag.current?.moved ?? false, key: drag.current?.key ?? `text-move-${Date.now()}` };
   }
 
   function onPreviewDown(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -282,14 +299,14 @@ export function Editor({ id }: { id: string }) {
     if (playerRef.current?.playing) playerRef.current.pause();
     if (pointers.current.size === 1) {
       drag.current = null;
-      const id = hitText(pt);
+      const id = hitText(pt) ?? (mainSel && !textSel ? mainSel.id : null); // a selected main clip moves from anywhere on the preview
       if (id) {
         setSelectedId(id);
         setNotice('');
         startGesture(id, pt, null);
       }
     } else if (pointers.current.size === 2) {
-      const id = drag.current?.id ?? textSel?.id ?? overlaySel?.id;
+      const id = drag.current?.id ?? textSel?.id ?? visual?.id;
       const [a, b] = [...pointers.current.values()];
       if (id) startGesture(id, pt, pinchOf(a, b));
     }
@@ -329,13 +346,100 @@ export function Editor({ id }: { id: string }) {
     }
   }
 
+  // Reverse needs a reversed copy of the video; it is made once (with progress) and kept for every clip of that video.
+  async function toggleReverse() {
+    if (!p || !visual || visual.kind !== 'video') return;
+    if (visual.reversed) return edit((d) => setReversed(d, visual.id, false));
+    const asset = p.assets[visual.assetId];
+    if (!asset.reversedFile) {
+      setBusy(true);
+      setBusyText('กำลังเตรียมคลิปถอยหลัง… 0%');
+      try {
+        const path = await buildReversed(p.id, asset, (f) => setBusyText(`กำลังเตรียมคลิปถอยหลัง… ${Math.round(f * 100)}%`), new AbortController().signal);
+        edit((d) => {
+          setReversedFile(d, asset.id, path);
+          setReversed(d, visual.id, true);
+        });
+      } catch (e) {
+        setNotice(`ทำคลิปถอยหลังไม่สำเร็จ: ${importMessage(e)}`);
+      } finally {
+        setBusy(false);
+        setBusyText('');
+      }
+    } else edit((d) => setReversed(d, visual.id, true));
+  }
+
+  // Freeze: the frame at the playhead becomes a 3-second still, inserted there.
+  async function freeze() {
+    if (!p || !mainSel || mainSel.kind !== 'video') return;
+    const el = playerRef.current?.sourceOf(mainSel) as HTMLVideoElement | null;
+    if (!el?.videoWidth) return setNotice('รอให้ภาพขึ้นก่อน แล้วค่อยกดหยุดภาพ');
+    const cv = document.createElement('canvas');
+    cv.width = el.videoWidth;
+    cv.height = el.videoHeight;
+    cv.getContext('2d')!.drawImage(el, 0, 0);
+    const blob = await new Promise<Blob | null>((r) => cv.toBlob(r, 'image/jpeg', 0.95));
+    if (!blob) return setNotice('จับภาพไม่สำเร็จ');
+    const assetId = crypto.randomUUID();
+    const file = await storeMedia(p.id, assetId, blob);
+    const still: MediaAsset = { id: assetId, kind: 'photo', name: `${p.assets[mainSel.assetId].name} (หยุดภาพ)`, file, bytes: blob.size, duration: 0, width: cv.width, height: cv.height, rotation: 0, hasAudio: false };
+    let fid = '';
+    edit((d) => {
+      fid = insertFreeze(d, mainSel.id, time, still);
+    });
+    setSelectedId(fid);
+  }
+
+  // Voiceover: record the microphone while the video plays silently from the playhead; the recording lands there.
+  async function voiceover(state: 'start' | 'stop') {
+    const player = playerRef.current;
+    if (!p || !player) return;
+    if (state === 'start') {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((x) => MediaRecorder.isTypeSupported(x));
+      const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      rec.start(250);
+      recorder.current = { rec, chunks, at: time, stream };
+      player.mute = true;
+      player.play();
+      return;
+    }
+    const r = recorder.current;
+    recorder.current = null;
+    if (!r) return;
+    await new Promise((done) => {
+      r.rec.onstop = done;
+      r.rec.stop();
+    });
+    r.stream.getTracks().forEach((x) => x.stop());
+    player.pause();
+    player.mute = false;
+    const blob = new Blob(r.chunks, { type: r.rec.mimeType || 'audio/webm' });
+    const file = new File([blob], `พากย์เสียง ${formatTime(r.at)}.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`, { type: blob.type });
+    setBusy(true);
+    try {
+      const asset = await importMedia(p.id, file, 'audio');
+      let aid = '';
+      edit((d) => {
+        aid = addAudio(d, asset, r.at);
+      });
+      setSelectedId(aid);
+      setSheet(null);
+    } catch (e) {
+      setNotice(importMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // A small frame of the selected clip, for the preset tiles.
-  function captureStill() {
+  function captureStill(w = 160) {
     const player = playerRef.current;
     const img = visual && player?.sourceOf(visual);
     if (img && p && visual) {
       const a = p.assets[visual.assetId];
-      const w = 160;
       const h = Math.max(1, Math.round((w * a.height) / a.width));
       const c = document.createElement('canvas');
       c.width = w;
@@ -413,6 +517,17 @@ export function Editor({ id }: { id: string }) {
         <span className="flex-1 text-center font-mono text-xs text-muted">
           {formatTime(time, true)} / {formatTime(total, true)}
         </span>
+        {placed && time >= placed.start && time <= placed.start + placed.duration && (
+          <Button
+            variant="ghost"
+            size="md"
+            aria-label={onKey ? 'ลบคีย์เฟรม' : 'เพิ่มคีย์เฟรม'}
+            aria-pressed={onKey}
+            onClick={() => edit((d) => void toggleKeyframe(d, placed.id, local))}
+          >
+            <Diamond size={20} aria-hidden className={onKey ? 'fill-accent text-accent' : ''} />
+          </Button>
+        )}
         <Button variant="ghost" size="md" aria-label={playing ? 'หยุด' : 'เล่น'} disabled={!p} onClick={() => (playing ? player?.pause() : player?.play())}>
           {playing ? <Pause size={20} aria-hidden /> : <Play size={20} aria-hidden />}
         </Button>
@@ -420,7 +535,7 @@ export function Editor({ id }: { id: string }) {
 
       {(notice || busy) && (
         <p role={busy ? 'status' : 'alert'} className={`px-4 pb-1 text-xs ${busy ? 'text-muted' : 'text-warning'}`}>
-          {busy ? 'กำลังนำเข้า…' : notice}
+          {busy ? busyText || 'กำลังนำเข้า…' : notice}
         </p>
       )}
 
@@ -438,6 +553,10 @@ export function Editor({ id }: { id: string }) {
           onDelete={remove}
           onTrim={(from, edge, dt) => edit((d) => trimEdge(d, from, edge, dt), `edge-${from.id}`)}
           onScrub={() => player?.playing && player.pause()}
+          onTransition={(fromClipId) => {
+            setTransitionFrom(fromClipId);
+            setSheet('transition');
+          }}
         />
       )}
 
@@ -446,6 +565,7 @@ export function Editor({ id }: { id: string }) {
           <>
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
+            <ToolButton icon={Mic} label="พากย์เสียง" disabled={!p || busy} active={sheet === 'voiceover'} onClick={() => setSheet('voiceover')} />
             <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(Math.min(time, Math.max(0, total - SEC)))} />
             <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
             <ToolButton icon={Captions} label="คำบรรยาย" disabled={!p || busy} active={sheet === 'captions'} onClick={() => setSheet('captions')} />
@@ -457,7 +577,14 @@ export function Editor({ id }: { id: string }) {
           <>
             {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
-            {overlaySel && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
+            {visual && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
+            {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Gauge} label="ความเร็ว" active={sheet === 'speed'} onClick={() => setSheet('speed')} />}
+            {visual?.kind === 'video' && <ToolButton icon={Rewind} label="ถอยหลัง" disabled={busy} active={visual.reversed} aria-pressed={visual.reversed} onClick={() => void toggleReverse()} />}
+            {mainSel?.kind === 'video' && <ToolButton icon={Snowflake} label="หยุดภาพ" disabled={busy} onClick={() => void freeze()} />}
+            {visual && <ToolButton icon={Crop} label="ครอป" active={sheet === 'crop'} onClick={() => {
+              captureStill(320);
+              setSheet('crop');
+            }} />}
             <ToolButton icon={Scissors} label="แยก" onClick={split} />
             <ToolButton icon={SlidersHorizontal} label={sel.kind === 'video' || sel.kind === 'audio' ? 'ตัด' : 'ระยะเวลา'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />
             {animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={() => {
@@ -467,7 +594,7 @@ export function Editor({ id }: { id: string }) {
             {visual && <ToolButton icon={Palette} label="ฟิลเตอร์" active={sheet === 'colour' && colourTab === 'filter'} onClick={() => openColour('filter')} />}
             {visual && <ToolButton icon={Gem} label="คุณภาพ" active={sheet === 'quality'} onClick={() => setSheet('quality')} />}
             {visual && <ToolButton icon={SunMedium} label="ปรับแก้" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
-            {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="ระดับเสียง" active={sheet === 'volume'} onClick={() => setSheet('volume')} />}
+            {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="เสียง" active={sheet === 'sound'} onClick={() => setSheet('sound')} />}
             <ToolButton icon={Trash2} label="ลบ" disabled={onlyMain} onClick={() => remove(sel.id)} />
           </>
         )}
@@ -565,22 +692,50 @@ export function Editor({ id }: { id: string }) {
           onAddHere={() => newText(Math.min(time, Math.max(0, total - SEC)))}
         />
       )}
-      {p && overlaySel && (
-        <BottomSheet open={sheet === 'place'} title="จัดวางภาพซ้อน" onClose={() => setSheet(null)} modal={false}>
-          <div className="flex flex-col gap-2">
-            <Slider label="ขนาด" value={Math.round(overlaySel.transform.scale * 100)} min={5} max={300} step={1} format={(v) => `${v}%`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { scale: v / 100 }), 'overlay-scale')} />
-            <Slider label="หมุน" value={Math.round(overlaySel.transform.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { rotation: v }), 'overlay-rotate')} />
-            <Slider label="ความทึบ" value={Math.round(overlaySel.transform.opacity * 100)} min={0} max={100} step={5} format={(v) => `${v}%`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { opacity: v / 100 }), 'overlay-opacity')} />
-            <div className="flex gap-2">
-              <Button variant="secondary" size="md" onClick={() => edit((d) => setTransform(d, overlaySel.id, { x: 0.5, y: 0.5 }))}>กลางจอ</Button>
-              <Button variant="secondary" size="md" onClick={() => edit((d) => setTransform(d, overlaySel.id, { x: 0.5, y: 0.5, scale: 1, rotation: 0 }))}>เต็มจอ</Button>
-            </div>
-            <p className="text-xs text-muted">บนจอตัวอย่าง: ลากเพื่อย้าย ใช้สองนิ้วเพื่อย่อ/ขยายและหมุน</p>
-          </div>
-        </BottomSheet>
+      {p && visual && (
+        <PlaceSheet
+          open={sheet === 'place'}
+          onClose={() => setSheet(null)}
+          clip={visual}
+          at={local}
+          onKey={onKey}
+          set={(patch, key) => edit((d) => setTransformAt(d, visual.id, local, patch), key)}
+          setEasing={(e) => edit((d) => setKeyEasing(d, visual.id, local, e))}
+        />
       )}
+      {p && (sel?.kind === 'video' || sel?.kind === 'audio') && <SpeedSheet open={sheet === 'speed'} onClose={() => setSheet(null)} clip={sel} />}
+      {p && visual && <CropSheet open={sheet === 'crop'} onClose={() => setSheet(null)} clip={visual} aspect={p.assets[visual.assetId].width / Math.max(1, p.assets[visual.assetId].height)} still={still} />}
+      {p && (
+        <TransitionSheet
+          open={sheet === 'transition'}
+          onClose={() => setSheet(null)}
+          project={p}
+          fromClipId={transitionFrom}
+          onPreview={(from, to) => player?.playRange(Math.max(0, from), to)}
+        />
+      )}
+      {p && (sel?.kind === 'video' || sel?.kind === 'audio') && (
+        <SoundSheet
+          open={sheet === 'sound'}
+          onClose={() => setSheet(null)}
+          clip={sel}
+          canExtract={sel.kind === 'video' && p.assets[sel.assetId].hasAudio && sel.volume > 0}
+          onExtracted={(aid) => {
+            setSelectedId(aid);
+            setNotice('แยกเสียงแล้ว: คลิปเสียงอยู่ในแทร็กเสียง ส่วนวิดีโอปิดเสียงไว้');
+          }}
+        />
+      )}
+      {p && <VoiceoverSheet open={sheet === 'voiceover'} onClose={() => setSheet(null)} onRecord={voiceover} time={time} />}
       {p && textSel && (
-        <TextSheet open={sheet === 'text'} onClose={() => setSheet(null)} clip={textSel} onNext={() => newText(textSel.start + textSel.duration, textSel)} />
+        <TextSheet
+          open={sheet === 'text'}
+          onClose={() => setSheet(null)}
+          clip={textSel}
+          shown={transformAt(textSel, local)}
+          setTransform={(patch, key) => edit((d) => setTransformAt(d, textSel.id, local, patch), key)}
+          onNext={() => newText(textSel.start + textSel.duration, textSel)}
+        />
       )}
       {p && sel && (
         <BottomSheet open={sheet === 'trim'} title={sel.kind === 'photo' ? 'ระยะเวลารูป' : sel.kind === 'text' ? 'ระยะเวลาข้อความ' : 'ตัดคลิป'} onClose={() => setSheet(null)} modal={false}>
@@ -609,20 +764,56 @@ export function Editor({ id }: { id: string }) {
           )}
         </BottomSheet>
       )}
-      {p && sel && (sel.kind === 'video' || sel.kind === 'audio') && (
-        <BottomSheet open={sheet === 'volume'} title="ระดับเสียง" onClose={() => setSheet(null)} modal={false}>
-          <Slider
-            label="ระดับเสียง"
-            value={Math.round(sel.volume * 100)}
-            min={0}
-            max={200}
-            step={5}
-            format={(v) => `${v}%`}
-            onChange={(v) => edit((d) => setVolume(d, sel.id, v / 100), 'volume')}
-          />
-        </BottomSheet>
-      )}
     </div>
+  );
+}
+
+const EASINGS: [Easing, string][] = [
+  ['linear', 'คงที่'],
+  ['easeIn', 'ช้า→เร็ว'],
+  ['easeOut', 'เร็ว→ช้า'],
+  ['easeInOut', 'นุ่มสองข้าง'],
+];
+
+// Size, turn and opacity of a picture; with keyframes these edit the keyframe at the playhead (one is made if needed).
+function PlaceSheet({ open, onClose, clip, at, onKey, set, setEasing }: { open: boolean; onClose: () => void; clip: MediaClip; at: number; onKey: boolean; set: (patch: Partial<Transform>, key?: string) => void; setEasing: (e: Easing) => void }) {
+  const tr = transformAt(clip, at);
+  const easing = clip.keyframes.find((k) => Math.abs(k.at - at) < SEC / 60)?.easing;
+  return (
+    <BottomSheet open={open} title="จัดวาง" onClose={onClose} modal={false}>
+      <div className="flex flex-col gap-2">
+        <Slider label="ขนาด" value={Math.round(tr.scale * 100)} min={5} max={400} step={1} format={(v) => `${v}%`} onChange={(v) => set({ scale: v / 100 }, 'place-scale')} />
+        <Slider label="หมุน" value={Math.round(tr.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => set({ rotation: v }, 'place-rotate')} />
+        <Slider label="ความทึบ" value={Math.round(tr.opacity * 100)} min={0} max={100} step={5} format={(v) => `${v}%`} onChange={(v) => set({ opacity: v / 100 }, 'place-opacity')} />
+        <div className="flex gap-2">
+          <Button variant="secondary" size="md" onClick={() => set({ x: 0.5, y: 0.5 })}>
+            กลางจอ
+          </Button>
+          <Button variant="secondary" size="md" onClick={() => set({ x: 0.5, y: 0.5, scale: 1, rotation: 0 })}>
+            เต็มจอ
+          </Button>
+        </div>
+        {onKey && easing && (
+          <div role="radiogroup" aria-label="ความนุ่มจากคีย์เฟรมนี้ไปคีย์เฟรมถัดไป" className="flex flex-col gap-1">
+            <span className="text-sm">จากคีย์เฟรมนี้ไปถัดไป</span>
+            <div className="flex gap-1">
+              {EASINGS.map(([e, label]) => (
+                <button
+                  key={e}
+                  role="radio"
+                  aria-checked={easing === e}
+                  onClick={() => setEasing(e)}
+                  className={`h-9 flex-1 rounded-md text-xs ${easing === e ? 'bg-accent text-on-accent' : 'bg-raised'} focus-visible:outline-2 focus-visible:outline-accent`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <p className="text-xs text-muted">บนจอตัวอย่าง: ลากเพื่อย้าย ใช้สองนิ้วเพื่อย่อ/ขยายและหมุน · กด ◆ เพื่อใส่คีย์เฟรม แล้วเลื่อนเวลาไปปรับค่าใหม่ ภาพจะค่อยๆ เปลี่ยนระหว่างคีย์เฟรม</p>
+      </div>
+    </BottomSheet>
   );
 }
 

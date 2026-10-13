@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Film, Image, Layers, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeftRight, Film, Image, Layers, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration, snap, snapPoints, sourceOut } from '../timeline.ts';
 import { PEAK_RATE, THUMB_H, peaksOf, stripOf } from '../thumbs';
 import { sourceAt } from '../timing.ts';
+import { keyTimes } from '../keyframes';
 import type { AudioClip, Clip, MediaAsset, MediaClip, Project, Us } from '../schema';
 
 type Move = { index: number } | { start: Us };
@@ -90,6 +91,7 @@ export function Timeline({
   onDelete,
   onTrim,
   onScrub,
+  onTransition,
 }: {
   project: Project;
   time: Us;
@@ -100,6 +102,7 @@ export function Timeline({
   onDelete: (id: string) => void;
   onTrim: (from: Clip, edge: Edge, dt: Us) => void; // dt is measured from where the drag began
   onScrub: () => void; // a finger or wheel on the timeline: stop playback so it does not fight the scroll
+  onTransition: (fromClipId: string) => void;
 }) {
   const [pps, setPps] = useState(48); // pixels per second
   const [drag, setDrag] = useState<{ id: string; dx: number } | null>(null);
@@ -307,6 +310,29 @@ export function Timeline({
                     <Icon size={14} aria-hidden className={`relative shrink-0 ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60' : ''}`} />
                     <span className={`relative min-w-0 truncate ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60 px-0.5' : ''}`}>{name}</span>
                   </button>,
+                  selected &&
+                    c.kind !== 'audio' &&
+                    keyTimes(c).map((at) => (
+                      <span
+                        key={`${c.id}-key-${at}`}
+                        aria-hidden
+                        className="pointer-events-none absolute top-1/2 z-20 size-2.5 -translate-1/2 rotate-45 border border-bg bg-accent"
+                        style={{ left: left + (at / SEC) * pps }}
+                      />
+                    )),
+                  track.kind === 'main' &&
+                    i + 1 < track.clips.length &&
+                    !drag && (
+                      <button
+                        key={`${c.id}-cut`}
+                        aria-label={`ทรานซิชันระหว่างคลิปที่ ${i + 1} และ ${i + 2}${project.transitions.some((x) => x.fromClipId === c.id) ? ' (มีแล้ว)' : ''}`}
+                        onClick={() => onTransition(c.id)}
+                        className={`absolute bottom-0 z-30 grid size-6 -translate-x-1/2 translate-y-1/3 place-items-center rounded-sm border border-bg ${project.transitions.some((x) => x.fromClipId === c.id) ? 'bg-accent text-on-accent' : 'bg-fg text-bg'} focus-visible:outline-2 focus-visible:outline-accent`}
+                        style={{ left: ((c.start + c.duration) / SEC) * pps }}
+                      >
+                        <ArrowLeftRight size={12} aria-hidden />
+                      </button>
+                    ),
                   selected &&
                     !dragging &&
                     (['in', 'out'] as const).map((edge) => (

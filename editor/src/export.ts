@@ -19,7 +19,8 @@ import type { AudioClip, ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
 import { renderFrame, visibleAt } from './render';
-import { fileSecondsAt } from './timing.ts';
+import { fileSecondsAt, rateAt } from './timing.ts';
+import { voiceChain } from './voice';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 
@@ -213,27 +214,64 @@ async function mixAudio(p: Project, clips: (MediaClip | AudioClip)[], total: num
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((total / SEC) * SAMPLE_RATE)), SAMPLE_RATE);
   for (const clip of clips) {
     const asset = p.assets[clip.assetId];
-    const input = openInput(await openMedia(asset.file));
-    try {
-      const sink = new AudioBufferSink((await input.getPrimaryAudioTrack())!);
-      const from = clip.sourceIn / SEC;
-      const to = sourceOut(clip) / SEC;
-      const gain = ctx.createGain();
-      gain.gain.value = clip.volume;
-      gain.connect(ctx.destination);
-      for await (const { buffer, timestamp } of sink.buffers(from, to)) {
-        const offset = Math.max(0, from - timestamp);
-        const length = Math.min(buffer.duration - offset, to - (timestamp + offset));
-        if (length <= 0) continue;
-        const node = ctx.createBufferSource();
-        node.buffer = buffer;
-        node.playbackRate.value = clip.speed;
-        node.connect(gain);
-        node.start(clip.start / SEC + Math.max(0, timestamp - from) / clip.speed, offset, length);
-      }
-    } finally {
-      input.dispose();
+    const reversed = clip.kind === 'video' && clip.reversed && asset.reversedFile;
+    // The part of the file the clip plays, in that file's own time (reversed clips read the reversed copy).
+    const from = (reversed ? asset.duration - sourceOut(clip) : clip.sourceIn) / SEC;
+    const to = (reversed ? asset.duration - clip.sourceIn : sourceOut(clip)) / SEC;
+    const buf = await decodeRange(ctx, reversed || asset.file, from, to);
+    if (!buf) continue;
+    const start = clip.start / SEC;
+    const dur = Math.min(clip.duration, total - clip.start) / SEC;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    if (clip.kind === 'video' && clip.curve) {
+      // A speed ramp is a playback-rate curve; integrating it lands exactly on the clip's source positions.
+      src.playbackRate.setValueCurveAtTime(Float32Array.from({ length: 256 }, (_, i) => rateAt(clip, (i / 255) * clip.duration)), start, clip.duration / SEC);
+    } else src.playbackRate.value = clip.speed;
+    const g = ctx.createGain();
+    const fadeIn = (clip.fadeIn ?? 0) / SEC;
+    const fadeOut = (clip.fadeOut ?? 0) / SEC;
+    const end = start + clip.duration / SEC;
+    g.gain.setValueAtTime(fadeIn ? 0 : clip.volume, start);
+    if (fadeIn) g.gain.linearRampToValueAtTime(clip.volume, start + fadeIn);
+    if (fadeOut) {
+      g.gain.setValueAtTime(clip.volume, end - fadeOut);
+      g.gain.linearRampToValueAtTime(0, end);
     }
+    src.connect(g);
+    if (clip.voice) {
+      const chain = voiceChain(ctx, clip.voice);
+      g.connect(chain.input);
+      chain.output.connect(ctx.destination);
+    } else g.connect(ctx.destination);
+    src.start(start);
+    src.stop(start + dur);
   }
   return ctx.startRendering();
+}
+
+// One buffer holding a file's sound from `from` to `to` seconds (mono is copied to both sides).
+async function decodeRange(ctx: BaseAudioContext, path: string, from: number, to: number) {
+  const input = openInput(await openMedia(path));
+  try {
+    const track = await input.getPrimaryAudioTrack();
+    if (!track || !(await track.canDecode())) return null;
+    const parts: { buffer: AudioBuffer; offset: number; length: number }[] = [];
+    for await (const { buffer, timestamp } of new AudioBufferSink(track).buffers(from, to)) {
+      const offset = Math.max(0, Math.round((from - timestamp) * buffer.sampleRate));
+      const length = Math.min(buffer.length - offset, Math.round((to - Math.max(from, timestamp)) * buffer.sampleRate));
+      if (length > 0) parts.push({ buffer, offset, length });
+    }
+    if (!parts.length) return null;
+    const rate = parts[0].buffer.sampleRate;
+    const out = ctx.createBuffer(2, parts.reduce((n, x) => n + x.length, 0), rate);
+    let at = 0;
+    for (const { buffer, offset, length } of parts) {
+      for (let c = 0; c < 2; c++) out.getChannelData(c).set(buffer.getChannelData(Math.min(c, buffer.numberOfChannels - 1)).subarray(offset, offset + length), at);
+      at += length;
+    }
+    return out;
+  } finally {
+    input.dispose();
+  }
 }

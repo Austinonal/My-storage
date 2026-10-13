@@ -1,5 +1,6 @@
-import { SCHEMA_VERSION, type Adjust, type Aspect, type Grade, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
+import { SCHEMA_VERSION, type Adjust, type Aspect, type Easing, type Grade, type Voice, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
 import { CURVE_CHANNELS, HSL_COLOURS, WHEELS, neutralGrade } from './grade.ts';
+import { setEasing, setKeys, toggleKey } from './keyframes.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
@@ -188,6 +189,7 @@ export interface TemplateSlot {
   in: { presetId: string; seconds: number } | null;
   out: { presetId: string; seconds: number } | null;
   combo: { presetId: string; seconds: number } | null;
+  dissolve?: number | null; // seconds of a cross-dissolve from the slot before
 }
 
 // Gives the main track the template's rhythm: your clips fill the first slots in order, empty slots get the placeholder,
@@ -214,6 +216,14 @@ export function applyTemplate(p: Project, slots: TemplateSlot[], placeholder: Me
   p.tracks[0].clips = [...filled, ...own.slice(slots.length)];
   normalize(p);
   dropEmptyTracks(p);
+  slots.forEach((s, i) => {
+    if (!s.dissolve || i === 0) return;
+    try {
+      setTransition(p, filled[i - 1].id, 'dissolve', Math.round(s.dissolve * SEC));
+    } catch {
+      // clips too short for it: leave the cut plain
+    }
+  });
 }
 
 // Swaps the picture or video in a main-track clip and keeps its place, length and animations.
@@ -303,6 +313,131 @@ export function setAspect(p: Project, aspect: Aspect) {
 
 export function setCanvas(p: Project, canvas: Project['canvas']) {
   p.canvas = canvas.kind === 'blur' ? { kind: 'blur', level: clamp(Math.round(canvas.level), 1, 4) as 1 | 2 | 3 | 4 } : { kind: 'colour', colour: /^#[0-9a-f]{6}$/i.test(canvas.colour) ? canvas.colour : '#000000' };
+}
+
+// Speed keeps the part of the recording the clip uses; the clip gets longer or shorter.
+export function setSpeed(p: Project, clipId: string, speed: number) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' && c.kind !== 'audio') throw new Error('only videos and sounds have a speed');
+  const span = c.duration * c.speed;
+  const old = c.duration;
+  c.speed = clamp(speed, 0.1, 100);
+  c.duration = Math.max(frameUs(p), Math.round(span / c.speed));
+  c.keyframes = c.keyframes.map((k) => ({ ...k, at: Math.round((k.at * c.duration) / old) }));
+  if (c.kind === 'audio') {
+    c.fadeIn = Math.min(c.fadeIn, Math.floor(c.duration / 2));
+    c.fadeOut = Math.min(c.fadeOut, Math.floor(c.duration / 2));
+  } else fitAnims(c);
+  normalize(p);
+  if (trackOf(p, clipId).kind !== 'main') moveClip(p, clipId, { start: c.start });
+}
+
+// A speed ramp: relative speeds along the clip; the clip's length and the recording it uses do not change.
+export function setCurve(p: Project, clipId: string, curve: [number, number][] | null) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video') throw new Error('only videos have a speed curve');
+  if (!curve) return void (c.curve = null);
+  const pts = curve.map(([x, v]) => [clamp(x, 0, 1), clamp(v, 0.1, 10)] as [number, number]).sort((a, b) => a[0] - b[0]).slice(0, 12);
+  if (pts.length < 2) throw new Error('a curve needs two points');
+  pts[0][0] = 0;
+  pts[pts.length - 1][0] = 1;
+  c.curve = pts;
+}
+
+export function setReversed(p: Project, clipId: string, on: boolean) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video') throw new Error('only videos play backwards');
+  if (on && !p.assets[c.assetId].reversedFile) throw new Error('the reversed copy is not made yet');
+  c.reversed = on;
+}
+
+export function setReversedFile(p: Project, assetId: string, path: string) {
+  p.assets[assetId].reversedFile = path;
+}
+
+export function setCrop(p: Project, clipId: string, crop: MediaClip['crop']) {
+  const c = visualClip(p, clipId);
+  const w = clamp(crop.w, 0.05, 1);
+  const h = clamp(crop.h, 0.05, 1);
+  c.crop = { x: clamp(crop.x, 0, 1 - w), y: clamp(crop.y, 0, 1 - h), w, h, rotate: ((((Math.round(crop.rotate / 90) * 90) % 360) + 360) % 360) as 0 | 90 | 180 | 270, mirror: !!crop.mirror };
+}
+
+// A still of the clip at `at` (already saved as a photo asset) goes in at that point, splitting the clip around it.
+export function insertFreeze(p: Project, clipId: string, at: Us, still: MediaAsset, seconds = 3) {
+  const c = findClip(p, clipId) as MediaClip;
+  const main = p.tracks[0].clips;
+  if (!main.includes(c)) throw new Error('freeze works on the main track');
+  splitAt(p, c.id, at);
+  const index = main.indexOf(c) + (at <= c.start ? 0 : 1);
+  const [id] = addMedia(p, [still], index);
+  const f = findClip(p, id) as MediaClip;
+  f.duration = Math.max(frameUs(p), Math.round(seconds * SEC));
+  Object.assign(f, structuredClone({ filter: c.filter, adjust: c.adjust, grade: c.grade, match: c.match, crop: c.crop, transform: c.transform }));
+  normalize(p);
+  return id;
+}
+
+export function setTransition(p: Project, fromClipId: string, presetId: string | null, duration: Us) {
+  const main = p.tracks[0].clips;
+  const i = main.findIndex((c) => c.id === fromClipId);
+  const to = main[i + 1];
+  if (i < 0 || !to) throw new Error('a transition needs a next clip');
+  p.transitions = p.transitions.filter((t) => t.fromClipId !== fromClipId);
+  if (!presetId) return;
+  const max = Math.floor(Math.min(main[i].duration, to.duration) / 2);
+  if (max < frameUs(p)) throw new Error('these clips are too short for a transition');
+  p.transitions.push({ id: crypto.randomUUID(), fromClipId, toClipId: to.id, presetId, duration: clamp(Math.round(duration), frameUs(p), max) });
+}
+
+// Moves or resizes a picture or text at clip time `at`: on a keyframe there when the clip has keyframes, else on the clip.
+export function setTransformAt(p: Project, clipId: string, at: Us, patch: Partial<Transform>) {
+  const c = findClip(p, clipId);
+  if (c.kind === 'audio') throw new Error('sound has no position');
+  const clean: Partial<Transform> = { ...patch };
+  if (clean.x !== undefined) clean.x = clamp(clean.x, -0.5, 1.5);
+  if (clean.y !== undefined) clean.y = clamp(clean.y, -0.5, 1.5);
+  if (clean.scale !== undefined) clean.scale = clamp(clean.scale, c.kind === 'text' ? 0.2 : 0.05, 8);
+  if (clean.opacity !== undefined) clean.opacity = clamp(clean.opacity, 0, 1);
+  setKeys(c, clamp(Math.round(at), 0, c.duration), clean, frameUs(p) / 2);
+}
+
+export function toggleKeyframe(p: Project, clipId: string, at: Us) {
+  const c = findClip(p, clipId);
+  if (c.kind === 'audio') throw new Error('sound has no position');
+  return toggleKey(c, clamp(Math.round(at), 0, c.duration), frameUs(p) / 2);
+}
+
+export function setKeyEasing(p: Project, clipId: string, at: Us, easing: Easing) {
+  const c = findClip(p, clipId);
+  if (c.kind === 'audio') throw new Error('sound has no position');
+  setEasing(c, at, easing, frameUs(p) / 2);
+}
+
+// Sound fading in at the start and out at the end of a clip (each at most half the clip).
+export function setFades(p: Project, clipId: string, fadeIn: Us, fadeOut: Us) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'audio' && c.kind !== 'video') throw new Error('only sound fades');
+  c.fadeIn = clamp(Math.round(fadeIn), 0, Math.floor(c.duration / 2));
+  c.fadeOut = clamp(Math.round(fadeOut), 0, Math.floor(c.duration / 2));
+}
+
+export function setVoice(p: Project, clipId: string, voice: Voice | null) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'audio' && c.kind !== 'video') throw new Error('only sound has a voice');
+  c.voice = voice;
+}
+
+// The sound of a video becomes its own clip on an audio track (same time and part); the video goes quiet.
+export function extractAudio(p: Project, clipId: string) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' || !p.assets[c.assetId].hasAudio) throw new Error('this clip has no sound');
+  const a: AudioClip = {
+    id: crypto.randomUUID(), kind: 'audio', assetId: c.assetId, start: c.start, duration: c.duration, keyframes: [],
+    sourceIn: c.sourceIn, speed: c.speed, volume: c.volume, fadeIn: c.fadeIn ?? 0, fadeOut: c.fadeOut ?? 0, voice: c.voice ?? null,
+  };
+  c.volume = 0;
+  place(p, a);
+  return a.id;
 }
 
 export function setMatch(p: Project, clipId: string, match: MediaClip['match']) {
@@ -471,6 +606,14 @@ export function normalize(p: Project) {
     t += c.duration;
   }
   for (const track of p.tracks.slice(1)) track.clips.sort((a, b) => a.start - b.start);
+  // Transitions follow their clips: gone when the two are no longer neighbours, shorter when a clip got shorter.
+  const main = p.tracks[0].clips;
+  p.transitions = (p.transitions ?? []).filter((tr) => {
+    const i = main.findIndex((c) => c.id === tr.fromClipId);
+    if (i < 0 || main[i + 1]?.id !== tr.toClipId) return false;
+    tr.duration = Math.min(tr.duration, Math.floor(Math.min(main[i].duration, main[i + 1].duration) / 2));
+    return tr.duration >= frameUs(p);
+  });
 }
 
 // The video is as long as the main track; anything on other tracks past its end is cut.
