@@ -14,7 +14,7 @@ Parity after each milestone comes from `python3 .claude/skills/replica-diff/pari
 - **Layers**: "เลื่อนขึ้น" / "เลื่อนลง" on a selected picture or text; text can now sit under a picture.
 - **Stickers** ("สติกเกอร์", in thumbnails and in the clip editor): 24 emoji and symbols, added as layers.
 - **Export**: JPEG or PNG.
-- **Reading the reference**: up to 8 text spots; tilted text keeps its slant; labels (letters on a filled box) keep the box; text over the person is found; every spot is read on the device (Tesseract, Thai + English, about 8 MB bundled, offline) and a spot that reads as nothing is dropped (busy textures); the words go into the text layer, sized and placed by the read lines.
+- **Reading the reference**: up to 8 text spots; tilted text keeps its slant; labels (letters on a filled box) keep the box; text over the person is found; every spot is read on the device (Tesseract, Thai + English, about 10 MB bundled, offline; the data ships unzipped because the Android build unzips .gz assets and renames them) and a spot that reads as nothing is dropped (busy textures); the words go into the text layer, sized and placed by the read lines.
 - Measured on a reference made in the app (5 texts) and a gravel background with no text:
 
   | | truth | found |

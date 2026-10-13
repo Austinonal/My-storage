@@ -10,7 +10,7 @@ import type { MediaAsset } from './schema';
 let reader: Promise<Worker> | null = null;
 const own = (path: string) => new URL(path, document.baseURI).href;
 function ocr() {
-  reader ??= createWorker(['tha', 'eng'], 1, { workerPath: own('ocr/worker.min.js'), corePath: own('ocr/tesseract-core-simd-lstm.wasm.js'), langPath: own('ocr'), workerBlobURL: false, gzip: true })
+  reader ??= createWorker(['tha', 'eng'], 1, { workerPath: own('ocr/worker.min.js'), corePath: own('ocr/tesseract-core-simd-lstm.wasm.js'), langPath: own('ocr'), workerBlobURL: false, gzip: false })
     .then(async (w) => {
       await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
       return w;
