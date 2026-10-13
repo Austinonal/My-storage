@@ -23,6 +23,7 @@ import {
   sourceOut,
   splitAt,
   trimClip,
+  trimEdge,
   updateText,
 } from '../timeline.ts';
 import type { Slot } from '../anim.ts';
@@ -401,6 +402,7 @@ export function Editor({ id }: { id: string }) {
           onSeek={(t) => player?.seek(t)}
           onMove={(clipId, to) => edit((d) => moveClip(d, clipId, to))}
           onDelete={remove}
+          onTrim={(from, edge, dt) => edit((d) => trimEdge(d, from, edge, dt), `edge-${from.id}`)}
           onScrub={() => player?.playing && player.pause()}
         />
       )}

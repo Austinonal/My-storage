@@ -1,9 +1,73 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Film, Image, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
-import { SEC, formatTime, projectDuration } from '../timeline.ts';
-import type { Clip, Project, Us } from '../schema';
+import { SEC, formatTime, projectDuration, snap, snapPoints, sourceOut } from '../timeline.ts';
+import { PEAK_RATE, THUMB_H, peaksOf, stripOf } from '../thumbs';
+import type { AudioClip, Clip, MediaAsset, MediaClip, Project, Us } from '../schema';
 
 type Move = { index: number } | { start: Us };
+type Edge = 'in' | 'out';
+const MIN_PPS = 8;
+const MAX_PPS = 240;
+const SNAP_PX = 10;
+const clampPps = (v: number) => Math.min(MAX_PPS, Math.max(MIN_PPS, v));
+
+function useResolved<T>(promise: Promise<T> | null) {
+  const [value, setValue] = useState<T | null>(null);
+  useEffect(() => {
+    let live = true;
+    setValue(null);
+    void promise?.then((v) => live && setValue(v));
+    return () => {
+      live = false;
+    };
+  }, [promise]);
+  return value;
+}
+
+// Frames from the clip's own source range, one tile per tile-width of timeline.
+function Filmstrip({ asset, clip, pps, h }: { asset: MediaAsset; clip: MediaClip; pps: number; h: number }) {
+  const strip = useResolved(stripOf(asset));
+  if (!strip) return null;
+  const tw = (strip.w * h) / THUMB_H;
+  const n = Math.ceil(((clip.duration / SEC) * pps) / tw);
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0 flex overflow-hidden">
+      {Array.from({ length: n }, (_, i) => {
+        const at = clip.kind === 'photo' ? 0 : clip.sourceIn / SEC + (((i + 0.5) * tw) / pps) * clip.speed;
+        const idx = Math.min(strip.count - 1, Math.max(0, Math.floor(at / strip.step)));
+        return (
+          <span
+            key={i}
+            className="flex-none"
+            style={{ width: tw, height: h, backgroundImage: `url(${strip.url})`, backgroundSize: `${strip.count * tw}px ${h}px`, backgroundPosition: `${-idx * tw}px 0` }}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+function Waveform({ asset, clip, pps }: { asset: MediaAsset; clip: AudioClip; pps: number }) {
+  const peaks = useResolved(peaksOf(asset));
+  if (!peaks) return null;
+  const n = Math.max(2, Math.min(600, Math.round(((clip.duration / SEC) * pps) / 3)));
+  const a = (clip.sourceIn / SEC) * PEAK_RATE;
+  const b = (sourceOut(clip) / SEC) * PEAK_RATE;
+  let d = '';
+  for (let i = 0; i < n; i++) {
+    const k0 = Math.floor(a + ((b - a) * i) / n);
+    const k1 = Math.max(k0 + 1, Math.floor(a + ((b - a) * (i + 1)) / n));
+    let v = 0;
+    for (let k = k0; k < k1; k++) v = Math.max(v, peaks[k] ?? 0);
+    const y = Math.max(0.03, Math.min(1, v * clip.volume)) * 0.45;
+    d += `M${i + 0.5} ${(0.5 - y).toFixed(3)}V${(0.5 + y).toFixed(3)}`;
+  }
+  return (
+    <svg aria-hidden className="pointer-events-none absolute inset-0 size-full text-fg opacity-50" viewBox={`0 0 ${n} 1`} preserveAspectRatio="none">
+      <path d={d} stroke="currentColor" strokeWidth={0.6} />
+    </svg>
+  );
+}
 
 const KIND = {
   video: { label: 'วิดีโอ', icon: Film, cls: 'bg-raised' },
@@ -22,6 +86,7 @@ export function Timeline({
   onSeek,
   onMove,
   onDelete,
+  onTrim,
   onScrub,
 }: {
   project: Project;
@@ -31,11 +96,16 @@ export function Timeline({
   onSeek: (t: Us) => void;
   onMove: (id: string, to: Move) => void;
   onDelete: (id: string) => void;
+  onTrim: (from: Clip, edge: Edge, dt: Us) => void; // dt is measured from where the drag began
   onScrub: () => void; // a finger or wheel on the timeline: stop playback so it does not fight the scroll
 }) {
   const [pps, setPps] = useState(48); // pixels per second
   const [drag, setDrag] = useState<{ id: string; dx: number } | null>(null);
-  const press = useRef<{ id: string; x: number; moved: boolean } | null>(null);
+  const [guide, setGuide] = useState<Us | null>(null); // a snap line while an edge or clip sticks to something
+  const press = useRef<{ c: Clip; x: number; moved: boolean; points: Us[] } | null>(null);
+  const trim = useRef<{ c: Clip; edge: Edge; x: number; points: Us[] } | null>(null);
+  const ppsRef = useRef(pps);
+  ppsRef.current = pps;
   const dragged = useRef(false); // the click that ends a drag must not toggle selection
   const scroller = useRef<HTMLDivElement>(null);
   const programmatic = useRef(-1);
@@ -52,6 +122,44 @@ export function Timeline({
       el.scrollLeft = x;
     }
   }, [time, pps]);
+
+  // Two fingers (or ctrl + wheel / a trackpad pinch) zoom the timeline.
+  useEffect(() => {
+    const el = scroller.current!;
+    let d0 = 0;
+    let p0 = 0;
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const start = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      d0 = Math.max(1, dist(e));
+      p0 = ppsRef.current;
+    };
+    const move = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !d0) return;
+      e.preventDefault();
+      setPps(clampPps((p0 * dist(e)) / d0));
+    };
+    const end = (e: TouchEvent) => {
+      if (e.touches.length < 2) d0 = 0;
+    };
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setPps((v) => clampPps(v * Math.exp(-e.deltaY / 200)));
+    };
+    el.addEventListener('touchstart', start, { passive: true });
+    el.addEventListener('touchmove', move, { passive: false });
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', start);
+      el.removeEventListener('touchmove', move);
+      el.removeEventListener('touchend', end);
+      el.removeEventListener('touchcancel', end);
+      el.removeEventListener('wheel', wheel);
+    };
+  }, []);
 
   function onScroll() {
     const el = scroller.current!;
@@ -71,14 +179,29 @@ export function Timeline({
   function down(e: PointerEvent, c: Clip) {
     if (c.id !== selectedId) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    press.current = { id: c.id, x: e.clientX, moved: false };
+    press.current = { c, x: e.clientX, moved: false, points: snapPoints(project, time, c.id) };
   }
+  // Clips off the main track stick to the playhead and to other clips' edges; the main track is always gapless.
   function move(e: PointerEvent) {
     const p = press.current;
     if (!p) return;
-    const dx = e.clientX - p.x;
+    let dx = e.clientX - p.x;
     if (Math.abs(dx) > 4) p.moved = true;
-    if (p.moved) setDrag({ id: p.id, dx });
+    if (!p.moved) return;
+    let line: Us | null = null;
+    if (!main.includes(p.c)) {
+      const within = (SNAP_PX / pps) * SEC;
+      const start = p.c.start + (dx / pps) * SEC;
+      const a = snap(start, p.points, within);
+      const b = snap(start + p.c.duration, p.points, within);
+      const s = a !== null && (b === null || Math.abs(a - start) <= Math.abs(b - start - p.c.duration)) ? a : b !== null ? b - p.c.duration : null;
+      if (s !== null && s >= 0) {
+        dx = ((s - p.c.start) / SEC) * pps;
+        line = s === a ? a : b;
+      }
+    }
+    setGuide(line);
+    setDrag({ id: p.c.id, dx });
   }
   function up(c: Clip) {
     const p = press.current;
@@ -86,6 +209,27 @@ export function Timeline({
     dragged.current = !!p?.moved;
     if (p?.moved && drag) onMove(c.id, target(c, drag.dx));
     setDrag(null);
+    setGuide(null);
+  }
+
+  function trimDown(e: PointerEvent, c: Clip, edge: Edge) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    trim.current = { c: structuredClone(c), edge, x: e.clientX, points: snapPoints(project, time, c.id) };
+  }
+  function trimMove(e: PointerEvent) {
+    const t = trim.current;
+    if (!t) return;
+    let dt = ((e.clientX - t.x) / pps) * SEC;
+    const at = (t.edge === 'in' ? t.c.start : t.c.start + t.c.duration) + dt;
+    const s = snap(at, t.points, (SNAP_PX / pps) * SEC);
+    if (s !== null) dt += s - at;
+    setGuide(s);
+    onTrim(t.c, t.edge, Math.round(dt));
+  }
+  function trimUp() {
+    trim.current = null;
+    setGuide(null);
   }
   function click(c: Clip) {
     if (dragged.current) {
@@ -126,6 +270,8 @@ export function Timeline({
               </span>
             ))}
           </div>
+          <div className="relative">
+          {guide !== null && <div aria-hidden className="pointer-events-none absolute inset-y-0 z-30 w-px bg-accent" style={{ left: (guide / SEC) * pps }} />}
           {project.tracks.map((track) => (
             <div key={track.id} className={`relative mt-1 ${track.kind === 'main' ? 'h-14' : 'h-10'}`} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
               {track.clips.map((c, i) => {
@@ -135,7 +281,10 @@ export function Timeline({
                 const selected = c.id === selectedId;
                 const dragging = drag?.id === c.id;
                 const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text || 'ข้อความ' : project.assets[c.assetId]?.name ?? '';
-                return (
+                const left = (c.start / SEC) * pps + (dragging ? drag.dx : 0);
+                const width = Math.max(4, (c.duration / SEC) * pps - 2);
+                const asset = c.kind === 'text' || empty ? null : project.assets[c.assetId];
+                return [
                   <button
                     key={c.id}
                     aria-pressed={selected}
@@ -149,27 +298,43 @@ export function Timeline({
                     className={`absolute top-0 flex h-full items-center gap-1 overflow-hidden rounded-sm border-2 px-1 text-left text-xs ${k.cls} ${
                       selected ? 'z-10 border-playhead' : 'border-transparent'
                     } ${empty && !selected ? 'border-dashed border-muted' : ''} ${dragging ? 'z-20 opacity-80 shadow-pop' : ''} focus-visible:outline-2 focus-visible:outline-accent`}
-                    style={{
-                      left: (c.start / SEC) * pps + (dragging ? drag.dx : 0),
-                      width: Math.max(4, (c.duration / SEC) * pps - 2),
-                      touchAction: selected ? 'none' : 'pan-x pan-y',
-                    }}
+                    style={{ left, width, touchAction: selected ? 'none' : 'pan-x pan-y' }}
                   >
-                    <Icon size={14} aria-hidden className="shrink-0" />
-                    <span className="min-w-0 truncate">{name}</span>
-                  </button>
-                );
+                    {asset && c.kind !== 'audio' && <Filmstrip asset={asset} clip={c as MediaClip} pps={pps} h={52} />}
+                    {asset && c.kind === 'audio' && <Waveform asset={asset} clip={c} pps={pps} />}
+                    <Icon size={14} aria-hidden className={`relative shrink-0 ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60' : ''}`} />
+                    <span className={`relative min-w-0 truncate ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60 px-0.5' : ''}`}>{name}</span>
+                  </button>,
+                  selected &&
+                    !dragging &&
+                    (['in', 'out'] as const).map((edge) => (
+                      <div
+                        key={`${c.id}-${edge}`}
+                        aria-hidden
+                        data-edge={edge}
+                        onPointerDown={(e) => trimDown(e, c, edge)}
+                        onPointerMove={trimMove}
+                        onPointerUp={trimUp}
+                        onPointerCancel={trimUp}
+                        className={`absolute top-0 z-20 grid h-full w-4 cursor-ew-resize touch-none place-items-center bg-playhead ${edge === 'in' ? 'rounded-l-sm' : 'rounded-r-sm'}`}
+                        style={{ left: edge === 'in' ? left - 16 : left + width }}
+                      >
+                        <span className="h-1/2 w-0.5 rounded-pill bg-bg" />
+                      </div>
+                    )),
+                ];
               })}
             </div>
           ))}
+          </div>
         </div>
       </div>
       <div aria-hidden className="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-playhead" />
       <div className="absolute right-1 bottom-1 flex gap-1">
-        <button aria-label="ซูมออก" onClick={() => setPps((v) => Math.max(8, v / 1.5))} className="grid size-8 place-items-center rounded-md bg-surface text-muted focus-visible:outline-2 focus-visible:outline-accent">
+        <button aria-label="ซูมออก" onClick={() => setPps((v) => clampPps(v / 1.5))} className="grid size-8 place-items-center rounded-md bg-surface text-muted focus-visible:outline-2 focus-visible:outline-accent">
           <ZoomOut size={16} aria-hidden />
         </button>
-        <button aria-label="ซูมเข้า" onClick={() => setPps((v) => Math.min(240, v * 1.5))} className="grid size-8 place-items-center rounded-md bg-surface text-muted focus-visible:outline-2 focus-visible:outline-accent">
+        <button aria-label="ซูมเข้า" onClick={() => setPps((v) => clampPps(v * 1.5))} className="grid size-8 place-items-center rounded-md bg-surface text-muted focus-visible:outline-2 focus-visible:outline-accent">
           <ZoomIn size={16} aria-hidden />
         </button>
       </div>

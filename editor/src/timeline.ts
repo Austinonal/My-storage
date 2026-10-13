@@ -244,12 +244,15 @@ export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us)
   const assetDuration = p.assets[c.assetId].duration;
   const minSpan = Math.ceil(frameUs(p) * c.speed);
   const out = sourceOut(c);
+  const free = trackOf(p, clipId).kind !== 'main';
   if (edge === 'in') {
-    const s = Math.round(clamp(at, 0, out - minSpan));
+    // Off the main track the rest of the clip stays where it is in time, so its start moves with the cut.
+    const s = Math.round(clamp(at, free ? Math.max(0, c.sourceIn - c.start * c.speed) : 0, out - minSpan));
     const shift = Math.round((s - c.sourceIn) / c.speed);
     c.sourceIn = s;
     c.duration = Math.floor((out - s) / c.speed);
     c.keyframes = c.keyframes.map((k) => ({ ...k, at: k.at - shift }));
+    if (free) c.start = Math.max(0, c.start + shift);
   } else {
     const e = Math.round(clamp(at, c.sourceIn + minSpan, assetDuration));
     c.duration = Math.floor((e - c.sourceIn) / c.speed);
@@ -257,6 +260,36 @@ export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us)
   c.keyframes = c.keyframes.filter((k) => k.at >= 0 && k.at <= c.duration);
   if (c.kind !== 'audio') fitAnims(c);
   normalize(p);
+  if (free) moveClip(p, c.id, { start: c.start }); // an earlier start may now overlap a neighbour
+}
+
+// Dragging a clip's edge by `dt` on the timeline, measured from `from` (the clip as it was when the drag began).
+export function trimEdge(p: Project, from: Clip, edge: 'in' | 'out', dt: Us) {
+  if (from.kind === 'text') {
+    if (edge === 'in') {
+      const d = clamp(dt, -from.start, from.duration - frameUs(p));
+      setTextTiming(p, from.id, from.start + d, from.duration - d);
+    } else setTextTiming(p, from.id, from.start, from.duration + dt);
+  } else if (from.kind === 'photo') {
+    setPhotoDuration(p, from.id, from.duration + (edge === 'in' ? -dt : dt));
+  } else if (edge === 'in') {
+    trimClip(p, from.id, 'in', from.sourceIn + dt * from.speed);
+  } else {
+    trimClip(p, from.id, 'out', sourceOut(from) + dt * from.speed);
+  }
+}
+
+// Times a dragged edge sticks to: the playhead, the ends of the video and every other clip's edges.
+export function snapPoints(p: Project, playhead: Us, exceptId: string): Us[] {
+  const pts = [0, playhead, projectDuration(p)];
+  for (const t of p.tracks) for (const c of t.clips) if (c.id !== exceptId) pts.push(c.start, c.start + c.duration);
+  return pts;
+}
+
+export function snap(t: Us, points: Us[], within: Us): Us | null {
+  let best: Us | null = null;
+  for (const s of points) if (Math.abs(s - t) <= within && (best === null || Math.abs(s - t) < Math.abs(best - t))) best = s;
+  return best;
 }
 
 // A shorter clip squeezes its animations proportionally instead of dropping them.

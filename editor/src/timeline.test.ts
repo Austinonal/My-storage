@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -246,4 +246,41 @@ test('colour: filter intensity and adjust sliders clamp; text and audio refuse c
   assert.equal(c.filter, null);
   assert.equal((findClip(p, id) as MediaClip).filter, null);
   assert.throws(() => setFilter(p, addText(p, 0), 'film'));
+});
+
+test('edge trims: video keeps its place on the main track, audio and text keep the rest in time, photos change length', () => {
+  const p = make();
+  const v = p.tracks[0].clips[0] as MediaClip;
+  trimEdge(p, structuredClone(v), 'in', 1 * SEC);
+  assert.equal(findClip(p, v.id).start, 0, 'main track closes the gap');
+  assert.equal((findClip(p, v.id) as MediaClip).sourceIn, 1 * SEC);
+
+  const a = addAudio(p, song, 2 * SEC);
+  const before = structuredClone(findClip(p, a));
+  trimEdge(p, before, 'in', 0.5 * SEC);
+  const after = findClip(p, a) as AudioClip;
+  assert.equal(after.start, 2.5 * SEC, 'audio start follows its left edge');
+  assert.equal(after.sourceIn, 0.5 * SEC);
+  assert.equal(after.start + after.duration, before.start + before.duration, 'right end stays put');
+  trimEdge(p, structuredClone(after), 'in', -9 * SEC);
+  assert.equal(findClip(p, a).start, 2 * SEC, 'cannot pull audio before its own first sample');
+
+  const t = addText(p, 1 * SEC);
+  trimEdge(p, structuredClone(findClip(p, t)), 'in', -5 * SEC);
+  assert.equal(findClip(p, t).start, 0, 'text cannot start before 0');
+  assert.equal(findClip(p, t).duration, 4 * SEC);
+  assertValid(p);
+
+  const ph = addMedia(p, [photo], 1)[0];
+  trimEdge(p, structuredClone(findClip(p, ph)), 'out', 2 * SEC);
+  assert.equal(findClip(p, ph).duration, 5 * SEC);
+  assertValid(p);
+});
+
+test('snapping picks the nearest point within reach', () => {
+  const p = make();
+  const pts = snapPoints(p, 1.234 * SEC, 'nothing');
+  assert.equal(snap(1.2 * SEC, pts, 0.1 * SEC), 1.234 * SEC);
+  assert.equal(snap(2 * SEC, pts, 0.1 * SEC), null);
+  assert.ok(pts.includes(projectDuration(p)));
 });
