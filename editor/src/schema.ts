@@ -36,6 +36,7 @@ export interface MediaAsset {
   hasAudio: boolean;
   reversedFile?: string; // proxy built on first Reverse
   placeholder?: boolean; // the empty-slot picture a template leaves for you to replace
+  shake?: { t: number[]; x: number[]; y: number[]; r: number[]; luma: number[] }; // per-frame drift and brightness, recorded for steadying and deflicker
 }
 
 export interface Track {
@@ -81,6 +82,7 @@ export interface MediaClip extends ClipBase {
   adjust: Adjust;
   grade?: Grade; // per-colour HSL, curves, colour wheels; missing = untouched
   match?: { lutId: string; name: string; intensity: number } | null; // colour taken from another photo or clip, intensity 0..1
+  quality?: { enhance: { lo: [number, number, number]; hi: [number, number, number] } | null; stabilize: 0 | 1 | 2; deflicker: boolean };
   animIn: Anim | null; // starts on the first frame
   animOut: Anim | null; // ends on the last frame
   animCombo: Anim | null; // from the first frame, exclusive with animIn / animOut

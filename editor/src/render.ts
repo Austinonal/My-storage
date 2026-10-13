@@ -1,7 +1,8 @@
 import { SHAPES, glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
 import { textImage } from './text';
+import { STAB_ZOOM, correctionAt, flickerGainAt } from './stabilize.ts';
 import { graded } from './colour';
-import { fitContain } from './timeline.ts';
+import { SEC, fitContain } from './timeline.ts';
 import type { MediaClip, Project, TextClip, Us } from './schema';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -160,13 +161,32 @@ function drawText(ctx: Ctx, W: number, H: number, c: TextClip, t: Us): TextBox {
   return { id: c.id, ...box, rot: tr.rotation };
 }
 
+// Steadying and deflicker ride on the animation pose: a small zoom plus the shift that cancels the shake, and a brightness gain.
+function withQuality(p: Project, c: MediaClip, t: Us, pose: Pose, box: { w: number; h: number }, W: number, H: number): Pose {
+  const q = c.quality;
+  const s = p.assets[c.assetId].shake;
+  if (!q || !s || c.kind !== 'video' || (!q.stabilize && !q.deflicker)) return pose;
+  const sec = (c.sourceIn + t * c.speed) / SEC;
+  const out = { ...pose };
+  if (q.stabilize) {
+    const k = correctionAt(s, sec, q.stabilize);
+    const z = STAB_ZOOM[q.stabilize];
+    out.scale *= z;
+    out.x += (k.dx * box.w * z) / W; // drift is measured in fractions of the clip's own width and height
+    out.y += (k.dy * box.h * z) / H;
+    out.rot += k.rot;
+  }
+  if (q.deflicker) out.bright *= flickerGainAt(s, sec);
+  return out;
+}
+
 function drawOverlay(ctx: Ctx, W: number, H: number, p: Project, c: MediaClip, img: CanvasImageSource, t: Us): TextBox {
   const a = p.assets[c.assetId];
   const tr = c.transform;
   const fit = fitContain(a.width, a.height, W, H);
   const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
   const k = Math.min(1, Math.max(box.w, box.h) / Math.max(a.width, a.height));
-  const pose = poseAt(c, t);
+  const pose = withQuality(p, c, t, poseAt(c, t), box, W, H);
   drawClip(ctx, graded(img, a.width * k, a.height * k, c), a.width, a.height, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
   return { id: c.id, ...box, rot: tr.rotation };
 }
@@ -194,7 +214,9 @@ export function renderFrame(
   if (clip && img) {
     const a = p.assets[clip.assetId];
     const k = Math.min(1, Math.max(W, H) / Math.max(a.width, a.height)); // grade at output size, never above the source
-    drawClip(ctx, graded(img, a.width * k, a.height * k, clip), a.width, a.height, W, H, poseAt(clip, Math.min(clip.duration, Math.max(0, t - clip.start))));
+    const local = Math.min(clip.duration, Math.max(0, t - clip.start));
+    const pose = withQuality(p, clip, local, poseAt(clip, local), fitContain(a.width, a.height, W, H), W, H);
+    drawClip(ctx, graded(img, a.width * k, a.height * k, clip), a.width, a.height, W, H, pose);
   }
   const boxes: TextBox[] = [];
   for (const c of overlayClips(p)) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Captions, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, Captions, Gem, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
@@ -36,11 +36,12 @@ import { Timeline } from './Timeline';
 import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
 import { CaptionSheet } from './CaptionSheet';
+import { QualitySheet } from './QualitySheet';
 import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -460,6 +461,7 @@ export function Editor({ id }: { id: string }) {
               setSheet('anim');
             }} />}
             {visual && <ToolButton icon={Palette} label="ฟิลเตอร์" active={sheet === 'colour' && colourTab === 'filter'} onClick={() => openColour('filter')} />}
+            {visual && <ToolButton icon={Gem} label="คุณภาพ" active={sheet === 'quality'} onClick={() => setSheet('quality')} />}
             {visual && <ToolButton icon={SunMedium} label="ปรับแก้" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
             {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="ระดับเสียง" active={sheet === 'volume'} onClick={() => setSheet('volume')} />}
             <ToolButton icon={Trash2} label="ลบ" disabled={onlyMain} onClick={() => remove(sel.id)} />
@@ -501,6 +503,9 @@ export function Editor({ id }: { id: string }) {
       )}
       {p && visual && (
         <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} still={still} onApplyAll={() => colourToAll(visual)} />
+      )}
+      {p && visual && (
+        <QualitySheet open={sheet === 'quality'} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} onExport={() => (location.hash = `#/export/${id}`)} />
       )}
       {p && (
         <CaptionSheet

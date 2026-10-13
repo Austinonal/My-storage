@@ -22,7 +22,8 @@ uniform sampler2D img;
 uniform sampler3D lut;
 uniform sampler3D matchLut;
 uniform sampler2D curve;
-uniform float lutMix, lutSize, matchMix, matchSize, useCurve, useHsl, aspect;
+uniform float lutMix, lutSize, matchMix, matchSize, useCurve, useHsl, useLevels, aspect;
+uniform vec3 levelsLo, levelsHi;
 uniform vec2 texel;
 uniform float exposure, brightness, contrast, saturation, temperature, tint, highlights, shadows, sharpen;
 uniform float ambient, clarity, whites, blacks, fade, vignette;
@@ -48,6 +49,7 @@ vec3 look(sampler3D t, float n, vec3 c) { return texture(t, c * ((n - 1.0) / n) 
 void main() {
   vec4 s = texture(img, uv);
   vec3 c = s.rgb;
+  if (useLevels > 0.5) c = clamp((c - levelsLo) / (levelsHi - levelsLo), 0.0, 1.0); // enhance: stretch to the picture's real black and white
   float l0 = dot(c, W);
   if (sharpen != 0.0) {
     vec3 b = (px(vec2(texel.x, 0.0)) + px(-vec2(texel.x, 0.0)) + px(vec2(0.0, texel.y)) + px(-vec2(0.0, texel.y))) * 0.25;
@@ -99,7 +101,7 @@ void main() {
 }`;
 
 const SLIDERS = ADJUST_KEYS;
-const UNIFORMS = ['img', 'lut', 'matchLut', 'curve', 'lutMix', 'lutSize', 'matchMix', 'matchSize', 'useCurve', 'useHsl', 'aspect', 'texel', 'hsl', 'wheelS', 'wheelM', 'wheelH', ...SLIDERS];
+const UNIFORMS = ['img', 'lut', 'matchLut', 'curve', 'lutMix', 'lutSize', 'matchMix', 'matchSize', 'useCurve', 'useHsl', 'useLevels', 'levelsLo', 'levelsHi', 'aspect', 'texel', 'hsl', 'wheelS', 'wheelM', 'wheelH', ...SLIDERS];
 
 let ready: { gl: WebGL2RenderingContext; canvas: OffscreenCanvas; u: Record<string, WebGLUniformLocation | null>; src: WebGLTexture; curve: WebGLTexture } | null = null;
 let broken = false;
@@ -171,11 +173,11 @@ function lutTexture(gl: WebGL2RenderingContext, lut: Lut) {
   return t;
 }
 
-type Look = Pick<MediaClip, 'filter' | 'adjust' | 'grade' | 'match'>;
+type Look = Pick<MediaClip, 'filter' | 'adjust' | 'grade' | 'match' | 'quality'>;
 export const NO_ADJUST: Adjust = Object.fromEntries(ADJUST_KEYS.map((k) => [k, 0])) as unknown as Adjust;
 
 export const isGraded = (c: Look) =>
-  (!!c.filter && c.filter.intensity > 0) || (!!c.match && c.match.intensity > 0) || SLIDERS.some((k) => (c.adjust[k] ?? 0) !== 0) || gradeUsed(c.grade);
+  (!!c.filter && c.filter.intensity > 0) || (!!c.match && c.match.intensity > 0) || !!c.quality?.enhance || SLIDERS.some((k) => (c.adjust[k] ?? 0) !== 0) || gradeUsed(c.grade);
 
 // The clip's image with its colour applied, w x h; the original image when there is nothing to do.
 export function graded(img: CanvasImageSource, w: number, h: number, c: Look): CanvasImageSource {
@@ -191,9 +193,17 @@ export function graded(img: CanvasImageSource, w: number, h: number, c: Look): C
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img as TexImageSource);
   gl.uniform2f(u.texel, 1 / canvas.width, 1 / canvas.height);
   gl.uniform1f(u.aspect, canvas.width / canvas.height);
+  // Enhance = auto levels plus a little crispness, local contrast and colour on top of whatever the sliders say.
+  const enhance = c.quality?.enhance;
+  gl.uniform1f(u.useLevels, enhance ? 1 : 0);
+  if (enhance) {
+    gl.uniform3fv(u.levelsLo, enhance.lo);
+    gl.uniform3fv(u.levelsHi, enhance.hi);
+  }
+  const boost: Partial<Record<keyof Adjust, number>> = enhance ? { sharpen: 0.3, clarity: 0.25, saturation: 0.1 } : {};
   for (const k of SLIDERS) {
     const v = (c.adjust[k] ?? 0) / 100;
-    gl.uniform1f(u[k], k === 'exposure' ? v * 1.5 : k === 'sharpen' ? Math.max(0, v) * 1.5 : k === 'clarity' ? v * 1.2 : k === 'fade' ? Math.max(0, v) : v);
+    gl.uniform1f(u[k], (k === 'exposure' ? v * 1.5 : k === 'sharpen' ? Math.max(0, v) * 1.5 : k === 'clarity' ? v * 1.2 : k === 'fade' ? Math.max(0, v) : v) + (boost[k] ?? 0));
   }
   const g = c.grade;
   gl.uniform1f(u.useHsl, hslUsed(g) ? 1 : 0);
@@ -260,8 +270,8 @@ export async function prepareLuts(p: Project) {
   }
 }
 
-// Colour statistics of a photo or a clip (eight frames across `from`..`to` seconds), read small.
-async function statsOfMedia(blob: Blob, isPhoto: boolean, from = 0, to = Infinity): Promise<ColourStats> {
+// A photo, or eight frames across `from`..`to` seconds of a clip, read small.
+export async function sampleImages(blob: Blob, isPhoto: boolean, from = 0, to = Infinity): Promise<ImageData[]> {
   if (isPhoto) {
     const bmp = await createImageBitmap(blob);
     const w = 160;
@@ -270,7 +280,7 @@ async function statsOfMedia(blob: Blob, isPhoto: boolean, from = 0, to = Infinit
     const ctx = cv.getContext('2d')!;
     ctx.drawImage(bmp, 0, 0, w, h);
     bmp.close();
-    return statsOf(ctx.getImageData(0, 0, w, h).data);
+    return [ctx.getImageData(0, 0, w, h)];
   }
   const input = openInput(blob);
   try {
@@ -278,17 +288,20 @@ async function statsOfMedia(blob: Blob, isPhoto: boolean, from = 0, to = Infinit
     if (!track || !(await track.canDecode())) throw new ImportError('unsupported-codec');
     const end = Math.min(to, await input.computeDuration());
     const sink = new CanvasSink(track, { width: 160, height: Math.max(1, Math.round((160 * (await track.getDisplayHeight())) / (await track.getDisplayWidth()))), fit: 'fill', poolSize: 1 });
-    const all: ColourStats[] = [];
+    const all: ImageData[] = [];
     for await (const frame of sink.canvasesAtTimestamps(Array.from({ length: 8 }, (_, i) => from + ((i + 0.5) / 8) * (end - from)))) {
       if (!frame) continue;
       const c = frame.canvas as OffscreenCanvas | HTMLCanvasElement;
-      all.push(statsOf((c.getContext('2d') as OffscreenCanvasRenderingContext2D).getImageData(0, 0, c.width, c.height).data));
+      all.push((c.getContext('2d') as OffscreenCanvasRenderingContext2D).getImageData(0, 0, c.width, c.height));
     }
-    return mergeStats(all);
+    return all;
   } finally {
     input.dispose();
   }
 }
+
+const statsOfMedia = async (blob: Blob, isPhoto: boolean, from?: number, to?: number): Promise<ColourStats> =>
+  mergeStats((await sampleImages(blob, isPhoto, from, to)).map((img) => statsOf(img.data)));
 
 // Colour match: a LUT that gives the clip the reference's colours, kept with the imported LUTs.
 export async function makeMatch(reference: File, clip: MediaClip, asset: MediaAsset) {

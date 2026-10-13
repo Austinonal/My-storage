@@ -282,6 +282,20 @@ export function setGrade(p: Project, clipId: string, patch: Partial<Grade>) {
   c.grade = g;
 }
 
+export function setQuality(p: Project, clipId: string, patch: Partial<NonNullable<MediaClip['quality']>>) {
+  const c = visualClip(p, clipId);
+  const q = { enhance: null, stabilize: 0 as const, deflicker: false, ...c.quality, ...patch };
+  if (c.kind === 'photo') {
+    q.stabilize = 0; // a still picture has nothing to steady or flicker
+    q.deflicker = false;
+  }
+  c.quality = q;
+}
+
+export function setShake(p: Project, assetId: string, shake: MediaAsset['shake']) {
+  p.assets[assetId].shake = shake;
+}
+
 export function setMatch(p: Project, clipId: string, match: MediaClip['match']) {
   visualClip(p, clipId).match = match ? { ...match, intensity: clamp(match.intensity, 0, 1) } : null;
 }

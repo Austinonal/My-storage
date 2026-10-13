@@ -7,6 +7,8 @@ import { outputSize } from '../timeline.ts';
 import { canShare, saveVideo, shareVideo } from '../save';
 import type { ExportSettings, Fps } from '../schema';
 
+const RES: Record<string, ExportSettings['height']> = { '720p': 720, '1080p': 1080, '2K': 1440, '4K': 2160 };
+
 type Job =
   | { state: 'idle' }
   | { state: 'running'; progress: number }
@@ -14,7 +16,7 @@ type Job =
   | { state: 'done'; file: File };
 
 function exportMessage(e: unknown) {
-  if (e instanceof ExportError) return 'เครื่องนี้สร้างไฟล์วิดีโอไม่ได้ (ไม่มีตัวเข้ารหัสวิดีโอที่รองรับ)';
+  if (e instanceof ExportError) return 'เครื่องนี้เข้ารหัสวิดีโอขนาดนี้ไม่ได้ ลองความละเอียดหรือเฟรมเรตที่ต่ำลง';
   if (e instanceof DOMException && e.name === 'QuotaExceededError') return 'พื้นที่ในเครื่องไม่พอ';
   if (e instanceof DOMException && e.name === 'NotFoundError') return 'ไฟล์วิดีโอต้นฉบับหายไปจากเครื่อง';
   return `ส่งออกไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`;
@@ -98,7 +100,7 @@ export function ExportScreen({ id }: { id: string }) {
       <main className="flex flex-col gap-6 px-4 pb-[calc(2rem+var(--safe-bottom))]">
         <fieldset disabled={busy} className="flex flex-col gap-2">
           <legend className="text-sm">ความละเอียด</legend>
-          <CategoryTabs items={['720p', '1080p']} value={`${height}p`} onChange={(v) => setHeight(parseInt(v) as 720 | 1080)} />
+          <CategoryTabs items={Object.keys(RES)} value={Object.keys(RES).find((k) => RES[k] === height)!} onChange={(v) => setHeight(RES[v])} />
           <p className="font-mono text-xs text-muted">
             {w} × {h}
           </p>
