@@ -1,7 +1,7 @@
 feature,area,priority,original,clone,notes
 New project from gallery clips and photos,project,must,yes,yes,"pick several videos and photos at once; photos last 3 s, adjustable"
-Drafts list with auto-save and reopen,project,must,yes,partial,"list, autosave (500 ms + flush on hide) and reopen work; no cover thumbnail yet"
-Rename duplicate delete a draft,project,should,yes,no,long-press on draft card (guess)
+Drafts list with auto-save and reopen,project,must,yes,yes,"list with covers, autosave, reopen"
+Rename duplicate delete a draft,project,should,yes,yes,manage sheet per project; duplicate copies the media; delete asks once more
 Missing source media warning on reopen,project,should,unknown,partial,editor shows a message; the drafts list does not flag it yet
 Multi-track timeline with pinch zoom and scrub,timeline,must,yes,yes,"main + overlay + audio + text tracks, scroll to scrub, pinch / ctrl+wheel / buttons zoom, filmstrip pictures on clips"
 Play pause and timecode on preview,timeline,must,yes,yes,stops at the trim out point
@@ -12,21 +12,21 @@ Reorder clips by drag,timeline,must,yes,yes,"select, then drag; or arrow keys"
 Undo and redo,timeline,must,yes,yes,"snapshot undo, a slider drag is one step"
 Snap to playhead and clip edges,timeline,should,yes,yes,"edges and moved clips stick within 10 px to the playhead, the video ends and other clips, with a guide line"
 Replace clip media keeping edits,clip,should,yes,yes,"keeps place, length and animations; fills template slots"
-Speed normal 0.1x to 100x,clip,must,yes,no,Play listing
-Speed curve presets and custom curve,clip,should,yes,no,Play listing
+Speed normal 0.1x to 100x,clip,must,yes,yes,"keeps the recording range, the clip gets shorter or longer; preview plays up to 16x and seeks beyond"
+Speed curve presets and custom curve,clip,should,yes,yes,"8 presets (montage, hero, bullet, jump cut, flash in/out...) and a draggable curve; sound follows the curve"
 Optical-flow slow motion,clip,could,yes,no,needs frame interpolation
-Reverse clip,clip,must,yes,no,source 21
-Freeze frame,clip,should,yes,no,Play listing
-Crop rotate mirror,clip,must,yes,no,S23
-Clip volume and mute,clip,must,yes,partial,0-200 % (0 = mute); preview caps at 100 %
+Reverse clip,clip,must,yes,yes,"a reversed copy (video + sound, up to 1080p) is made once per video"
+Freeze frame,clip,should,yes,yes,"3 s still from the playhead frame, keeps the clip look"
+Crop rotate mirror,clip,must,yes,yes,"free / 9:16 / 1:1 / 4:5 / 16:9 crop, quarter turns, mirror"
+Clip volume and mute,clip,must,yes,yes,"0-200 %, fades, voice effects, extract audio"
 Clip In Out Combo animations,clip,should,yes,yes,"291 own presets (100 in / 86 out / 105 combo), live tile previews, duration slider; art/particle presets not built"
 Stabilize,clip,could,yes,yes,light / strong; see Video quality row
-Keyframes for position scale rotation opacity,keyframes,must,yes,no,Play listing source 6
-Keyframe easing curves,keyframes,should,yes,no,
+Keyframes for position scale rotation opacity,keyframes,must,yes,yes,"on main clips, overlays and text; diamond button; drag/pinch/sliders edit the keyframe at the playhead"
+Keyframe easing curves,keyframes,should,yes,yes,"linear, ease in, ease out, ease in-out per keyframe"
 Keyframes on filter adjust volume mask,keyframes,could,unknown,no,guess
-Transitions between clips with duration,transitions,must,yes,no,S06
-Transition categories basic camera slide blur glitch light split distortion mask MG,transitions,should,yes,no,categories from source 5; our own presets
-Apply one transition to all cuts,transitions,could,unknown,no,not confirmed
+Transitions between clips with duration,transitions,must,yes,yes,"18 transitions, centred on the cut, the clips overlap with real footage"
+Transition categories basic camera slide blur glitch light split distortion mask MG,transitions,should,yes,partial,"basic, slide, zoom, blur, glitch, light, shape masks; no 3D/distortion yet"
+Apply one transition to all cuts,transitions,could,unknown,yes,"""ใช้กับทุกจุดตัด"""
 Add text layer with font size colour,text,must,yes,yes,"7 bundled Thai fonts (OFL), size, 12 colours + picker, opacity; drag / pinch / rotate on the preview"
 Text stroke shadow background,text,should,unknown,yes,"stroke, shadow, rounded background; 12 ready-made looks"
 Text In animations,text,must,yes,yes,"146: 20 per-letter (typewriter, pop, drop, scatter...) + every clip In"
@@ -42,12 +42,12 @@ Bilingual captions and filler-word removal,text,could,yes,no,
 Stickers layer,stickers,should,yes,no,our own or open-licence stickers only
 Add music from own files,audio,must,yes,yes,placed at the playhead on its own track; drag or arrow keys to move in time
 Extract audio from a video,audio,must,yes,yes,add sound accepts a video file and uses only its sound
-Record voiceover,audio,must,yes,no,F08
+Record voiceover,audio,must,yes,yes,MediaRecorder; the video plays silently while you speak; lands at the playhead
 Audio volume,audio,must,yes,yes,0-200 %
-Audio fade in and fade out,audio,must,yes,no,
+Audio fade in and fade out,audio,must,yes,yes,audio clips and video sound
 Audio split trim delete,audio,must,yes,yes,
 Waveform on audio clips,audio,should,yes,yes,"loudness curve per audio clip, follows trims and volume"
-Voice effects (pitch robot chipmunk etc),audio,should,yes,no,source 12
+Voice effects (pitch robot chipmunk etc),audio,should,yes,yes,"high, low, robot, echo, radio; same Web Audio graph in preview and export"
 Noise reduction,audio,should,yes,no,
 Beat markers manual and auto,audio,could,yes,no,
 Audio speed with pitch preserved,audio,should,unknown,no,
@@ -63,8 +63,8 @@ Opacity and blend modes,overlay,should,yes,partial,opacity yes; no blend modes
 Mask shapes with feather and invert,overlay,should,yes,no,v2
 Chroma key,overlay,should,yes,no,Play listing; v2
 Auto background removal,overlay,could,yes,no,needs segmentation model
-Aspect ratio presets 9:16 16:9 1:1 3:4 4:3,canvas,must,yes,no,S19
-Canvas colour and blur background,canvas,must,yes,no,S20
+Aspect ratio presets 9:16 16:9 1:1 3:4 4:3,canvas,must,yes,yes,plus 4:5 and 2:1
+Canvas colour and blur background,canvas,must,yes,yes,colour or 4 levels of blur from the clip itself
 Canvas image background,canvas,could,yes,no,
 Export 720p and 1080p,export,must,yes,yes,H.264 preferred; test Chromium fell back to VP9/Opus - confirm H.264/AAC on the phone
 Export 2K and 4K,export,should,yes,yes,"2K exported and probed (1440x2560); 4K offered, depends on the phone encoder (clear message when it cannot)"

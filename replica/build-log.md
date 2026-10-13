@@ -2,6 +2,28 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — the basics every editor has (parity 80.4, must-haves 33 of 34)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| S01 Projects | done | none | duplicating has to copy every media file into the new project's folder |
+| Keyframes | done | keyframes on volume, filters, adjust | edits had to land on "the keyframe at the playhead" from three places (drag/pinch, the placement sheet, the text sheet) |
+| S06 Transitions | done | 3D and distortion styles | the export decoded one clip at a time; now every clip that shows in a frame is pulled in step (two during a transition) |
+| Speed + curves | done | pitch-kept audio at other speeds | a curve is relative, so length and recording range never change; the sound follows the same curve |
+| Reverse | done | none | decoders only run forwards: a reversed copy is made half a second at a time from the end |
+| Freeze, crop | done | none | none |
+| Aspect + background | done | image backgrounds | none |
+| S07 Sound | done | noise reduction, pitch-kept speed | voice effects first came out ~7 dB quieter; made up |
+| Voiceover | done | not tried on a phone (needs the microphone permission, added to the APK) | none |
+
+- **Projects**: covers on the home list; "⋯" on a project: rename, duplicate (copies its media), delete (asks again).
+- **Aspect & background** ("อัตราส่วน"): 9:16, 16:9, 1:1, 3:4, 4:3, 4:5, 2:1; background colour or the clip itself blurred behind (4 levels).
+- **Clip tools**: speed 0.1x–100x (the clip gets shorter/longer), speed curves (8 presets + drag the points; length stays), reverse (a reversed copy is made once per video), freeze (3 s still at the playhead), crop (free or 9:16 / 1:1 / 4:5 / 16:9), quarter turns, mirror. Main clips can now be moved and zoomed too ("จัดวาง", or drag/pinch on the preview when selected).
+- **Keyframes**: the ◆ button next to the time adds or removes a keyframe at the playhead for the selected clip or text; any move, pinch or slider change after that lands on the keyframe at the playhead (made if needed); four easings per keyframe; diamonds on the timeline.
+- **Transitions**: the ⇄ button on every cut on the main track: 18 transitions (dissolve, through black/white, slides, zooms, blur, spin, glitch, flash, wipe, circle, heart, star, clock), length, "apply to every cut". The template's cross-dissolves now come out as real dissolves.
+- **Sound** ("เสียง"): volume, fade in, fade out, voice (high, low, robot, echo, radio), "แยกเสียง" (video sound to its own audio clip). **Voiceover** ("พากย์เสียง"): records the microphone while the video plays silently from the playhead.
+- Checked: 56 unit tests (timing, keyframes, transitions model, speed, crop, freeze, fades, extract); 15 e2e suites with zero errors; measured in exported files: reversed frames match the source backwards (0.3 s ↔ 3.6 s, 1 s ↔ 3 s, 2 s ↔ 2 s, 3 s ↔ 1 s), the slide transition is half-and-half at the cut, fades -38 → -21 → -38 dB, the high voice is 1.41× the pitch and the low one 0.72×, the voiceover lands at 4 s.
+
 ## 2026-10-13 — phone fixes, ปรับแก้, picture in picture, captions, video quality
 
 | ID | status | missing | harder than expected |
