@@ -265,7 +265,7 @@ export function DraftCard({
   onOpen: () => void;
 }) {
   return (
-    <button onClick={onOpen} className={`flex flex-col gap-2 text-left ${focus}`}>
+    <button onClick={onOpen} className={`flex w-full flex-col gap-2 text-left ${focus}`}>
       <span className="relative aspect-video w-full overflow-hidden rounded-md bg-raised">
         {cover && <img src={cover} alt="" className="size-full object-cover" />}
         {missingMedia && (

@@ -54,7 +54,7 @@ Pin exact versions of every dependency when `/replica-build` installs them.
 ## Schema
 
 There is no server database. The "schema" is the project document format,
-in `replica/schema.ts` (TypeScript types, schema version 1). Entities from
+in `editor/src/schema.ts` (TypeScript types, schema version 1). Entities from
 the recon map:
 
 | recon entity | where it lives |
@@ -98,7 +98,7 @@ makes undo/redo and autosave one mechanism).
 | route | screen | does | flow |
 | --- | --- | --- | --- |
 | `#/` | S01 | drafts grid, "+ New project" | F01, F16 |
-| `#/new` | S02 | system file picker (photo picker on Android, no storage permission), copies files to OPFS, creates the project | F01 |
+| (none) | S02 | the OS file picker, opened from S01; S01 copies the file to OPFS and creates the project | F01 |
 | `#/edit/:projectId` | S03-S25 | the editor; every tool is a bottom sheet over it | F02-F13 |
 | `#/export/:projectId` | S26-S27 | export settings, progress, save / share | F01 |
 

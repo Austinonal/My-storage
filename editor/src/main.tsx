@@ -1,6 +1,9 @@
 import { StrictMode, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { DesignPage } from './DesignPage';
+import { Home } from './screens/Home';
+import { Editor } from './screens/Editor';
+import { ExportScreen } from './screens/ExportScreen';
 import './index.css';
 
 const subscribe = (cb: () => void) => {
@@ -10,14 +13,11 @@ const subscribe = (cb: () => void) => {
 
 function App() {
   const hash = useSyncExternalStore(subscribe, () => location.hash);
+  const [, route, id] = hash.split('/');
   if (hash === '#/design') return <DesignPage />;
-  return (
-    <main className="grid min-h-dvh place-items-center p-4 text-center text-muted">
-      <p>
-        The editor is built in /replica-build. <a href="#/design" className="text-accent underline">Design system</a>
-      </p>
-    </main>
-  );
+  if (route === 'edit' && id) return <Editor id={id} />;
+  if (route === 'export' && id) return <ExportScreen id={id} />;
+  return <Home />;
 }
 
 createRoot(document.getElementById('root')!).render(

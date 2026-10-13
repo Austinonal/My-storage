@@ -7,10 +7,13 @@
     "tokens": "node scripts/tokens.mjs",
     "dev": "npm run tokens && vite",
     "build": "npm run tokens && tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test src/*.test.ts"
   },
   "dependencies": {
+    "idb-keyval": "6.3.0",
     "lucide-react": "1.55.0",
+    "mediabunny": "1.61.4",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
