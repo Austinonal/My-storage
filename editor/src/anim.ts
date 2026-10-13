@@ -9,7 +9,29 @@ export type Reveal =
   | { kind: 'grid'; n: number; amount: number } // n x n cells growing from their centres
   | { kind: 'blinds'; n: number; amount: number; vertical: boolean }
   | { kind: 'wedge'; deg: number } // sweeps from the left around the bottom centre
-  | { kind: 'diagonal'; amount: number };
+  | { kind: 'diagonal'; amount: number }
+  | { kind: 'shape'; shape: Shape; r: number; rot?: number }; // r = 1 covers the box
+
+export type Shape = 'diamond' | 'triangle' | 'hexagon' | 'star' | 'heart';
+
+// Unit outlines (radius 1, y down) and how far each must grow, in half-diagonals, before it covers the whole box.
+const ring = (n: number, r0: number, r1 = r0) => Array.from({ length: n }, (_, i) => {
+  const a = -Math.PI / 2 + (i * Math.PI) / (n / 2);
+  return [Math.cos(a) * (i % 2 ? r1 : r0), Math.sin(a) * (i % 2 ? r1 : r0)] as [number, number];
+});
+export const SHAPES: Record<Shape, { pts: [number, number][]; cover: number }> = {
+  diamond: { pts: [[0, -1], [1, 0], [0, 1], [-1, 0]], cover: 1.44 },
+  triangle: { pts: ring(3, 1), cover: 2.05 },
+  hexagon: { pts: ring(6, 1), cover: 1.17 },
+  star: { pts: ring(10, 1, 0.5), cover: 2.03 },
+  heart: {
+    pts: Array.from({ length: 48 }, (_, i) => {
+      const a = (i / 48) * Math.PI * 2;
+      return [(16 * Math.sin(a) ** 3) / 17, -(13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a)) / 17 - 0.15] as [number, number];
+    }),
+    cover: 2.0,
+  },
+};
 
 export interface Copy {
   dx?: number; // canvas fractions
@@ -262,6 +284,39 @@ const sinkOut: Fn = (p) => {
   return { y: 1.2 * ease.inBack(p), sx: 1 + sq, sy: 1 - sq };
 };
 
+const shapeIn = (shape: Shape, spin = 0): Fn => (p) => ({ reveal: p < 1 ? { kind: 'shape', shape, r: outCubic(p), rot: spin * (1 - outCubic(p)) } : null });
+const rollFrom = (d: 'left' | 'right'): Fn => (p) => {
+  const k = 1 - outCubic(p);
+  return { x: (d === 'left' ? -1.1 : 1.1) * k, rot: (d === 'left' ? -360 : 360) * k };
+};
+const cornerZoom = (px: number, py: number): Fn => (p) => ({ px, py, scale: outCubic(p), alpha: clamp01(p * 3) });
+const unfold = (edge: 'top' | 'bottom' | 'left' | 'right'): Fn => (p) => {
+  const e = Math.max(0.001, outBack(p));
+  return edge === 'top' || edge === 'bottom' ? { py: edge === 'top' ? -0.5 : 0.5, sy: e } : { px: edge === 'left' ? -0.5 : 0.5, sx: e };
+};
+const doorsH: Fn = (p) => {
+  const e = outCubic(p);
+  return { reveal: p < 1 ? { kind: 'rect', x0: -0.5 * e, y0: -0.5, x1: 0.5 * e, y1: 0.5 } : null };
+};
+const wipeTo = (d: 'left' | 'up'): Fn => (p) => {
+  const e = ease.inOutQuad(p);
+  return { reveal: p < 1 ? (d === 'left' ? { kind: 'rect', x0: 0.5 - e, y0: -0.5, x1: 0.5, y1: 0.5 } : { kind: 'rect', x0: -0.5, y0: 0.5 - e, x1: 0.5, y1: 0.5 }) : null };
+};
+const turn3d: Fn = (p) => ({ sx: Math.max(0.001, cos((1 - outCubic(p)) * (PI / 2))), rot: -20 * (1 - outCubic(p)), bright: lerp(0.4, 1, p) });
+const stretchIn: Fn = (p) => ({ sy: lerp(3, 1, outCubic(p)), sx: lerp(0.2, 1, outCubic(p)), alpha: clamp01(p * 2) });
+const squeezeIn: Fn = (p) => ({ sx: Math.max(0.001, outBack(p)), sy: lerp(1.3, 1, outCubic(p)) });
+const dropSpin: Fn = (p) => ({ y: -1.1 * (1 - ease.outBounce(p)), rot: 90 * (1 - outCubic(p)) });
+const flashBurst: Fn = (p) => ({ flash: p >= 1 ? 0 : Math.max(0, cos(p * PI * 6)) * (1 - p) });
+const warmLeak: Fn = (p) => ({ bright: lerp(2.4, 1, outCubic(p)), sepia: 0.7 * (1 - p), sat: lerp(2, 1, p), hue: -15 * (1 - p) });
+const neonIn: Fn = (p) => ({ hue: 180 * (1 - outCubic(p)), sat: lerp(3, 1, p), contrast: lerp(1.6, 1, p), alpha: clamp01(p * 3) });
+const glitchPixel: Fn = (p) => {
+  const n = Math.floor(p * 16);
+  return p >= 1 ? {} : { pixel: 0.05 * (1 - p) * (n % 3 ? 1 : 0.2), strips: Array.from({ length: 6 }, (_, i) => noise(n * 6 + i) * 0.15 * (1 - p)), x: noise(n) * 0.03 * (1 - p) };
+};
+const swirlIn: Fn = (p) => ({ rot: -720 * (1 - outCubic(p)), scale: lerp(2.5, 1, outCubic(p)), blur: 0.03 * (1 - p), alpha: clamp01(p * 2) });
+const hingeIn: Fn = (p) => ({ px: -0.5, py: -0.5, rot: 80 * (1 - ease.outElastic(p)), alpha: clamp01(p * 4) });
+const zoomBlurIn: Fn = (p) => ({ scale: lerp(1.6, 1, ease.outQuint(p)), blur: 0.05 * (1 - ease.outQuint(p)), bright: lerp(1.6, 1, p) });
+
 type Entry = [id: string, name: string, seconds: number, fn: Fn];
 
 const IN: Entry[] = [
@@ -365,6 +420,32 @@ const IN: Entry[] = [
   ['tada', 'ตาด้า', 1, tadaIn],
   ['light-speed', 'ความเร็วแสง', 0.6, lightSpeed],
   ['skew-left', 'เฉียงจากซ้าย', 0.5, skewFromLeft],
+  ['heart', 'หัวใจเปิด', 0.6, shapeIn('heart')],
+  ['star', 'ดาวเปิด', 0.6, shapeIn('star', 144)],
+  ['diamond', 'เพชรเปิด', 0.5, shapeIn('diamond')],
+  ['triangle', 'สามเหลี่ยมเปิด', 0.5, shapeIn('triangle', 120)],
+  ['hexagon', 'หกเหลี่ยมเปิด', 0.5, shapeIn('hexagon', 60)],
+  ['roll-left', 'กลิ้งจากซ้าย', 0.7, rollFrom('left')],
+  ['roll-right', 'กลิ้งจากขวา', 0.7, rollFrom('right')],
+  ['corner-zoom-tl', 'ซูมจากมุมซ้ายบน', 0.5, cornerZoom(-0.5, -0.5)],
+  ['corner-zoom-br', 'ซูมจากมุมขวาล่าง', 0.5, cornerZoom(0.5, 0.5)],
+  ['unfold-top', 'คลี่ลงจากบน', 0.6, unfold('top')],
+  ['unfold-bottom', 'คลี่ขึ้นจากล่าง', 0.6, unfold('bottom')],
+  ['unfold-left', 'คลี่จากซ้าย', 0.6, unfold('left')],
+  ['barn-door-h', 'เปิดประตูซ้ายขวา', 0.6, doorsH],
+  ['wipe-left', 'กวาดจากขวา', 0.5, wipeTo('left')],
+  ['wipe-up', 'กวาดจากล่าง', 0.5, wipeTo('up')],
+  ['turn-3d', 'หมุนสามมิติ', 0.6, turn3d],
+  ['stretch', 'ยืดลงมา', 0.5, stretchIn],
+  ['squeeze', 'บีบแล้วกาง', 0.5, squeezeIn],
+  ['drop-spin', 'หมุนตกลงมา', 0.8, dropSpin],
+  ['flash-burst', 'แฟลชรัว', 0.6, flashBurst],
+  ['warm-leak', 'แสงอุ่นรั่ว', 0.8, warmLeak],
+  ['neon', 'นีออนแวบ', 0.6, neonIn],
+  ['glitch-pixel', 'กลิตช์โมเสก', 0.6, glitchPixel],
+  ['swirl', 'เกลียวดูด', 0.8, swirlIn],
+  ['hinge', 'บานพับ', 0.9, hingeIn],
+  ['zoom-blur', 'ซูมเบลอพุ่ง', 0.5, zoomBlurIn],
 ];
 
 // ---- exits: an entrance played backwards; p = 0 at rest, p = 1 gone ----
@@ -461,6 +542,32 @@ const OUT: Entry[] = [
   ['rubber', 'ยางยืดหาย', 1, back(rubberIn)],
   ['light-speed', 'ความเร็วแสงออก', 0.6, back(lightSpeed)],
   ['skew-left', 'เฉียงออกซ้าย', 0.5, back(skewFromLeft)],
+  ['heart', 'หัวใจปิด', 0.6, back(shapeIn('heart'))],
+  ['star', 'ดาวปิด', 0.6, back(shapeIn('star', 144))],
+  ['diamond', 'เพชรปิด', 0.5, back(shapeIn('diamond'))],
+  ['triangle', 'สามเหลี่ยมปิด', 0.5, back(shapeIn('triangle', 120))],
+  ['hexagon', 'หกเหลี่ยมปิด', 0.5, back(shapeIn('hexagon', 60))],
+  ['roll-left', 'กลิ้งออกซ้าย', 0.7, back(rollFrom('left'))],
+  ['roll-right', 'กลิ้งออกขวา', 0.7, back(rollFrom('right'))],
+  ['corner-zoom-tl', 'หดเข้ามุมซ้ายบน', 0.5, back(cornerZoom(-0.5, -0.5))],
+  ['corner-zoom-br', 'หดเข้ามุมขวาล่าง', 0.5, back(cornerZoom(0.5, 0.5))],
+  ['unfold-top', 'พับขึ้นบน', 0.6, back(unfold('top'))],
+  ['unfold-bottom', 'พับลงล่าง', 0.6, back(unfold('bottom'))],
+  ['unfold-left', 'พับไปซ้าย', 0.6, back(unfold('left'))],
+  ['barn-door-h', 'ปิดประตูซ้ายขวา', 0.6, back(doorsH)],
+  ['wipe-right', 'กวาดไปขวา', 0.5, back(wipeTo('left'))],
+  ['wipe-down', 'กวาดลงล่าง', 0.5, back(wipeTo('up'))],
+  ['turn-3d', 'หมุนสามมิติออก', 0.6, back(turn3d)],
+  ['stretch', 'ยืดหายขึ้นบน', 0.5, back(stretchIn)],
+  ['squeeze', 'บีบหาย', 0.5, back(squeezeIn)],
+  ['drop-spin', 'หมุนกระเด็นขึ้น', 0.8, back(dropSpin)],
+  ['flash-burst', 'แฟลชรัวหาย', 0.6, back(flashBurst)],
+  ['warm-leak', 'แสงอุ่นกลืน', 0.8, back(warmLeak)],
+  ['neon', 'นีออนดับ', 0.6, back(neonIn)],
+  ['glitch-pixel', 'กลิตช์โมเสกหาย', 0.6, back(glitchPixel)],
+  ['swirl', 'เกลียวหมุนหาย', 0.8, back(swirlIn)],
+  ['hinge', 'บานพับหลุด', 0.9, (p) => ({ px: -0.5, py: -0.5, rot: 80 * ease.inBack(p) * 1.2, y: 1.2 * ease.inCubic(clamp01((p - 0.5) / 0.5)), alpha: 1 - clamp01((p - 0.8) / 0.2) })],
+  ['zoom-blur', 'ซูมเบลอทะลุ', 0.5, back(zoomBlurIn)],
 ];
 
 // ---- combos: one motion across the clip, p = 0..1 over its duration ----
@@ -671,6 +778,32 @@ const COMBO: Entry[] = [
     const n = Math.floor(p * 30);
     return { scale: 1.15, x: noise(n) * 0.02, y: noise(n + 9) * 0.02 };
   }],
+  ['heart-pulse', 'หัวใจเต้นเปิดปิด', 2, inOut(shapeIn('heart'), back(shapeIn('heart')), 0.35)],
+  ['star-spin', 'ดาวหมุนเปิดปิด', 2, inOut(shapeIn('star', 216), back(shapeIn('star', 216)), 0.35)],
+  ['diamond-in-out', 'เพชรเปิดปิด', 2, inOut(shapeIn('diamond'), back(shapeIn('diamond')))],
+  ['mirror', 'กระจกสมมาตร', 2, (p) => ({ copies: [{ reveal: { kind: 'rect', x0: -0.5, y0: -0.5, x1: 0, y1: 0.5 } }, { sx: -1, reveal: { kind: 'rect', x0: -0.5, y0: -0.5, x1: 0, y1: 0.5 } }], scale: 1 + 0.08 * tri(p) })],
+  ['kaleido', 'คาไลโดสโคป', 3, (p) => ({ scale: 1 + 0.25 * tri(p * 2), copies: [[1, 1], [-1, 1], [1, -1], [-1, -1]].map(([sx, sy]) => ({ sx: sx * sy, scale: sy, reveal: { kind: 'rect' as const, x0: -0.5, y0: -0.5, x1: 0, y1: 0 } })) })],
+  ['slow-spin', 'การ์ดหมุนช้าๆ', 4, (p) => ({ rot: 360 * ease.inOutQuad(p), scale: 0.8 })],
+  ['tilt-left', 'เอียงซ้ายช้าๆ', 3, (p) => ({ rot: -8 * ease.inOutQuad(p), scale: 1.15 })],
+  ['tilt-right', 'เอียงขวาช้าๆ', 3, (p) => ({ rot: 8 * ease.inOutQuad(p), scale: 1.15 })],
+  ['kb-pan-up', 'แพนขึ้น', 4, (p) => ({ scale: 1.25, y: lerp(0.1, -0.1, ease.inOutQuad(p)) })],
+  ['kb-pan-down', 'แพนลง', 4, (p) => ({ scale: 1.25, y: lerp(-0.1, 0.1, ease.inOutQuad(p)) })],
+  ['kb-zoom-tl', 'ซูมช้าเข้ามุมซ้ายบน', 4, (p) => ({ px: -0.3, py: -0.3, scale: lerp(1, 1.35, ease.inOutQuad(p)) })],
+  ['kb-zoom-rotate', 'ซูมหมุนช้า', 4, (p) => ({ scale: lerp(1.1, 1.4, ease.inOutQuad(p)), rot: lerp(-4, 4, ease.inOutQuad(p)) })],
+  ['blur-beat', 'เบลอตามจังหวะ', 2, (p) => ({ blur: 0.03 * tri(p * 4) ** 3 })],
+  ['bw-beat', 'ขาวดำตามจังหวะ', 2, (p) => ({ gray: Math.floor(p * 8) % 2 })],
+  ['negative-beat', 'เนกาทีฟตามจังหวะ', 2, (p) => ({ invert: Math.floor(p * 8) % 4 === 3 ? 1 : 0 })],
+  ['mosaic-beat', 'โมเสกตามจังหวะ', 2, (p) => ({ pixel: Math.floor(p * 8) % 2 ? 0.03 : 0 })],
+  ['shake-hard', 'สั่นแรง', 2, (p) => { const n = Math.floor(p * 40); return { scale: 1.2, x: noise(n) * 0.05, y: noise(n + 5) * 0.05, rot: noise(n + 11) * 3 }; }],
+  ['wind', 'ลมพัด', 3, (p) => ({ skew: 10 * sin(p * PI * 6), x: 0.02 * sin(p * PI * 6), scale: 1.12 })],
+  ['ball-bounce', 'ลูกบอลเด้ง', 2, (p) => { const k = tri(p * 3); const sq = k < 0.15 ? 0.25 * (1 - k / 0.15) : 0; return { y: -0.25 * Math.sin(k * PI / 2) + 0.05, sx: 1 + sq, sy: 1 - sq, py: 0.5, scale: 0.8 }; }],
+  ['flash-beat', 'แฟลชตามจังหวะ', 2, (p) => ({ flash: Math.max(0, 1 - ((p * 4) % 1) * 4) * 0.8 })],
+  ['warm-glow', 'แสงอุ่นเป็นจังหวะ', 3, (p) => ({ bright: 1 + 0.35 * tri(p * 2), sepia: 0.4 * tri(p * 2), sat: 1.2 })],
+  ['neon-cycle', 'นีออนวน', 3, (p) => ({ hue: 360 * p, sat: 2.2, contrast: 1.3 })],
+  ['glitch-loop', 'กลิตช์ต่อเนื่อง', 2, (p) => { const n = Math.floor(p * 24); const on = noise(n * 3) > 0.3; return on ? { strips: Array.from({ length: 8 }, (_, i) => noise(n * 8 + i) * 0.08), x: noise(n) * 0.02, hue: noise(n + 2) * 40 } : {}; }],
+  ['roll-through', 'กลิ้งผ่าน', 2, inOut(rollFrom('left'), back(rollFrom('right')), 0.35)],
+  ['unfold-fold', 'คลี่แล้วพับ', 2, inOut(unfold('top'), back(unfold('bottom')))],
+  ['turn-3d-loop', 'หมุนสามมิติไปมา', 3, (p) => ({ sx: Math.max(0.05, Math.abs(cos(p * PI * 2))) * (cos(p * PI * 2) < 0 ? -1 : 1), bright: lerp(0.6, 1, Math.abs(cos(p * PI * 2))) })],
 ];
 
 const build = (slot: Slot, entries: Entry[]): Preset[] => entries.map(([id, name, seconds, pose]) => ({ id: `${slot}:${id}`, slot, name, seconds, pose }));
@@ -703,6 +836,20 @@ const GLYPH_IN: GlyphEntry[] = [
   ['t-flip', 'พลิกทีละตัว', 1, (p, i, n) => ({ sy: cos((1 - outCubic(each(p, i, n))) * PI) })],
   ['t-wave', 'คลื่นเข้า', 1.2, (p, i, n) => ({ y: -0.6 * sin(each(p, i, n) * PI), alpha: each(p, i, n) })],
   ['t-stretch', 'ยืดทีละตัว', 1, (p, i, n) => ({ sx: lerp(3, 1, outCubic(each(p, i, n))), sy: lerp(0.2, 1, outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+  ['t-elastic', 'สปริงทีละตัว', 1.2, (p, i, n) => ({ scale: ease.outElastic(each(p, i, n)) })],
+  ['t-roll', 'กลิ้งทีละตัว', 1.2, (p, i, n) => ({ x: -1.5 * (1 - outCubic(each(p, i, n))), rot: -360 * (1 - outCubic(each(p, i, n))), alpha: clamp01(each(p, i, n) * 2) })],
+  ['t-scatter', 'รวมตัวจากกระจาย', 1.2, (p, i, n) => {
+    const k = 1 - outCubic(each(p, i, n, 0.3));
+    return { x: noise(i * 13 + 1) * 3 * k, y: noise(i * 7 + 3) * 2 * k, rot: noise(i * 5 + 2) * 180 * k, alpha: 1 - k };
+  }],
+  ['t-glitch', 'กลิตช์ทีละตัว', 1, (p, i, n) => {
+    const e = each(p, i, n);
+    const f = Math.floor(p * 24);
+    return e >= 1 ? {} : { x: noise(f * 7 + i) * 0.3 * (1 - e), alpha: e > 0 && noise(f * 3 + i * 11) > -0.4 ? 1 : 0, hue: noise(f + i) * 90 * (1 - e) };
+  }],
+  ['t-ladder', 'ขึ้นลงสลับทีละตัว', 1, (p, i, n) => ({ y: (i % 2 ? 1 : -1) * (1 - outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+  ['t-unfold', 'คลี่ทีละตัว', 1, (p, i, n) => ({ sy: Math.max(0.001, outBack(each(p, i, n))), alpha: clamp01(each(p, i, n) * 3) })],
+  ['t-hue', 'สีไล่เข้า', 1.2, (p, i, n) => ({ hue: 300 * (1 - each(p, i, n)), alpha: each(p, i, n), y: 0.3 * (1 - outCubic(each(p, i, n))) })],
 ];
 
 const GLYPH_LOOP: GlyphEntry[] = [
@@ -721,6 +868,15 @@ const GLYPH_LOOP: GlyphEntry[] = [
     return { sx: 1 + w, sy: 1 - w };
   }],
   ['t-float', 'ลอยเบาๆ', 2, (p, i, n) => ({ y: -0.08 * sin(2 * PI * (p + i / (n * 2))) })],
+  ['t-spin-loop', 'หมุนวนทีละตัว', 2, (p, i, n) => ({ rot: 360 * ((((p * 2 - i / Math.max(4, n)) % 1) + 1) % 1) })],
+  ['t-zigzag', 'ซิกแซก', 1.5, (p, i) => ({ y: (i % 2 ? 1 : -1) * 0.15 * sin(2 * PI * p * 2) })],
+  ['t-glitch-loop', 'กลิตช์วน', 2, (p, i) => {
+    const f = Math.floor(p * 30);
+    return noise(f * 13 + i) > 0.75 ? { x: noise(f + i * 3) * 0.25, hue: 120, alpha: 0.8 } : {};
+  }],
+  ['t-pulse-wave', 'พองเป็นคลื่น', 1.5, (p, i, n) => ({ scale: 1 + 0.35 * Math.max(0, sin(2 * PI * (p * 2 - i / Math.max(4, n)))) })],
+  ['t-hang', 'ห้อยแกว่ง', 2, (p, i) => ({ rot: 14 * sin(2 * PI * p * 2 + i * 0.6), y: 0.05 * sin(2 * PI * p * 2 + i * 0.6) })],
+  ['t-colour-flash', 'สีกะพริบทีละตัว', 1.5, (p, i) => ({ hue: ((Math.floor(p * 8) + i) % 3) * 120 })],
 ];
 
 const glyphs = (slot: Slot, list: GlyphEntry[], reverse = false): Preset[] =>
@@ -730,6 +886,8 @@ const OUT_NAMES: Record<string, string> = {
   't-typewriter': 'ลบทีละตัว', 't-fade': 'จางทีละตัว', 't-pop': 'ยุบทีละตัว', 't-drop': 'ร่วงทีละตัว', 't-rise': 'จมทีละตัว',
   't-spin': 'หมุนหายทีละตัว', 't-zoom': 'ซูมหายทีละตัว', 't-slide': 'สไลด์ออกทีละตัว', 't-random': 'สุ่มหาย', 't-swing': 'แกว่งหายทีละตัว',
   't-flip': 'พลิกหายทีละตัว', 't-wave': 'คลื่นออก', 't-stretch': 'ยืดหายทีละตัว',
+  't-elastic': 'สปริงหายทีละตัว', 't-roll': 'กลิ้งออกทีละตัว', 't-scatter': 'แตกกระจาย', 't-glitch': 'กลิตช์หายทีละตัว', 't-ladder': 'ขึ้นลงสลับหาย',
+  't-unfold': 'พับหายทีละตัว', 't-hue': 'สีไล่หาย',
 };
 
 // Text gets the letter-by-letter presets first, then every clip preset (the whole block moves). Its third tab loops.

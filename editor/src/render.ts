@@ -1,4 +1,4 @@
-import { glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
+import { SHAPES, glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
 import { textImage } from './text';
 import { fitContain } from './timeline.ts';
 import type { MediaClip, Project, TextClip, Us } from './schema';
@@ -49,6 +49,19 @@ function clipTo(ctx: Ctx, r: Reveal, w: number, h: number) {
       ctx.arc(0, h / 2, Math.hypot(w, h), Math.PI, Math.PI + (r.deg * Math.PI) / 180);
       ctx.closePath();
       break;
+    case 'shape': {
+      const s = SHAPES[r.shape];
+      const R = (r.r * s.cover * Math.hypot(w, h)) / 2;
+      const turn = ((r.rot ?? 0) * Math.PI) / 180;
+      s.pts.forEach(([x, y], i) => {
+        const px = (x * Math.cos(turn) - y * Math.sin(turn)) * R;
+        const py = (x * Math.sin(turn) + y * Math.cos(turn)) * R;
+        if (i) ctx.lineTo(px, py);
+        else ctx.moveTo(px, py);
+      });
+      ctx.closePath();
+      break;
+    }
     case 'diagonal': {
       // the half-plane x/w + y/h <= 2·amount - 1, as a triangle big enough to cover the box
       const a = r.amount * 2 - 1;

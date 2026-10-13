@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PRESETS, REST, TEXT_PRESETS, poseAt, poseOf, type Pose, type Preset } from './anim.ts';
+import { PRESETS, REST, SHAPES, TEXT_PRESETS, poseAt, poseOf, type Pose, type Preset } from './anim.ts';
 import type { MediaAsset, MediaClip } from './schema.ts';
 import { SEC, assertValid, newProject, setAnim, trimClip } from './timeline.ts';
 
@@ -107,4 +107,27 @@ test('text letter presets: In ends with every letter at rest, Out starts there, 
     for (let k = 0; k <= 20; k++) for (const v of Object.values(preset.glyph!(k / 20, 3, 7))) assert.ok(Number.isFinite(v), preset.id);
   }
   assert.ok(TEXT_PRESETS.in.length > PRESETS.in.length, 'text also gets every clip preset');
+});
+
+// A shape reveal must cover the whole frame before it switches off, or the last frame pops.
+test('shape reveals cover the box at r = 1', () => {
+  const inside = (pts: [number, number][], x: number, y: number) => {
+    let hit = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i];
+      const [xj, yj] = pts[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  for (const [name, s] of Object.entries(SHAPES)) {
+    for (const [w, h] of [[16, 9], [9, 16], [1, 1]]) {
+      const R = (s.cover * Math.hypot(w, h)) / 2;
+      const pts = s.pts.map(([x, y]) => [x * R, y * R] as [number, number]);
+      for (let k = 0; k <= 40; k++) {
+        const f = k / 40 - 0.5;
+        for (const [x, y] of [[f * w, -h / 2], [f * w, h / 2], [-w / 2, f * h], [w / 2, f * h]]) assert.ok(inside(pts, x, y), `${name} ${w}x${h} misses ${x},${y}`);
+      }
+    }
+  }
 });
