@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ImagePlus, Music, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
@@ -15,6 +15,8 @@ import {
   moveClip,
   projectDuration,
   replaceClip,
+  setAdjust,
+  setFilter,
   setPhotoDuration,
   setTextTiming,
   setVolume,
@@ -28,10 +30,11 @@ import { AnimationSheet, type Still } from './AnimationSheet';
 import { Timeline } from './Timeline';
 import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
+import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -75,6 +78,7 @@ export function Editor({ id }: { id: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [still, setStill] = useState<Still | null>(null);
+  const [colourTab, setColourTab] = useState<ColourTab>('filter');
   const [pendingPlay, setPendingPlay] = useState<Slot | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -292,7 +296,8 @@ export function Editor({ id }: { id: string }) {
     }
   }
 
-  function openAnimations() {
+  // A small frame of the selected clip, for the preset tiles.
+  function captureStill() {
     const player = playerRef.current;
     const img = visual && player?.sourceOf(visual);
     if (img && p && visual) {
@@ -305,7 +310,23 @@ export function Editor({ id }: { id: string }) {
       c.getContext('2d')!.drawImage(img, 0, 0, w, h);
       setStill({ img: c, w, h });
     }
-    setSheet('anim');
+  }
+
+  function openColour(tab: ColourTab) {
+    captureStill();
+    setColourTab(tab);
+    setSheet('colour');
+  }
+
+  function colourToAll(from: MediaClip) {
+    edit((d) => {
+      for (const c of d.tracks[0].clips) {
+        if (c.kind !== 'video' && c.kind !== 'photo') continue;
+        setFilter(d, c.id, from.filter?.presetId ?? null, from.filter?.intensity ?? 1);
+        setAdjust(d, c.id, from.adjust);
+      }
+    });
+    setNotice('ใช้สีนี้กับทุกคลิปแล้ว');
   }
 
   if (status === 'not-found') return <Message>ไม่พบโปรเจกต์นี้ อาจถูกลบไปแล้ว</Message>;
@@ -399,7 +420,12 @@ export function Editor({ id }: { id: string }) {
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
             <ToolButton icon={Scissors} label="แยก" onClick={split} />
             <ToolButton icon={SlidersHorizontal} label={sel.kind === 'video' || sel.kind === 'audio' ? 'ตัด' : 'ระยะเวลา'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />
-            {animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={openAnimations} />}
+            {animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={() => {
+              captureStill();
+              setSheet('anim');
+            }} />}
+            {visual && <ToolButton icon={Palette} label="ฟิลเตอร์" active={sheet === 'colour' && colourTab === 'filter'} onClick={() => openColour('filter')} />}
+            {visual && <ToolButton icon={SunMedium} label="ปรับสี" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
             {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="ระดับเสียง" active={sheet === 'volume'} onClick={() => setSheet('volume')} />}
             <ToolButton icon={Trash2} label="ลบ" disabled={onlyMain} onClick={() => remove(sel.id)} />
           </>
@@ -433,6 +459,9 @@ export function Editor({ id }: { id: string }) {
       )}
       {p && animated && (
         <AnimationSheet open={sheet === 'anim'} onClose={() => setSheet(null)} clip={animated} still={visual ? still : null} onPlay={setPendingPlay} />
+      )}
+      {p && visual && (
+        <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} still={still} onApplyAll={() => colourToAll(visual)} />
       )}
       {p && textSel && (
         <TextSheet open={sheet === 'text'} onClose={() => setSheet(null)} clip={textSel} onNext={() => newText(textSel.start + textSel.duration, textSel)} />

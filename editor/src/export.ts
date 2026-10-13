@@ -18,6 +18,7 @@ import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } 
 import { deleteExport, exportFile, openInput, openMedia } from './media';
 import { renderFrame } from './render';
 import { loadFonts } from './fonts';
+import { prepareLuts } from './colour';
 
 export class ExportError extends Error {
   constructor(readonly code: 'no-video-encoder') {
@@ -57,7 +58,7 @@ export async function exportProject(
   if (audio) output.addAudioTrack(audio);
 
   try {
-    await loadFonts();
+    await Promise.all([loadFonts(), prepareLuts(p)]);
     await output.start();
     // Audio goes in first: it is small, so the muxer can hold it while the video streams in.
     if (audio) await audio.add(await mixAudio(p, audible, total));

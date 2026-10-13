@@ -2,6 +2,7 @@ import type { AudioClip, MediaClip, Project, Us } from './schema';
 import { openMedia } from './media';
 import { renderFrame, type TextBox } from './render';
 import { loadFonts } from './fonts';
+import { prepareLuts } from './colour';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
 
 type Source = { kind: 'video'; el: HTMLVideoElement } | { kind: 'photo'; img: ImageBitmap };
@@ -37,6 +38,7 @@ export class Player {
       this.audios.delete(id);
     }
     this.time = Math.min(this.time, projectDuration(p));
+    void prepareLuts(p).then(() => this.draw());
     void this.load(p);
     this.sync();
     this.draw();

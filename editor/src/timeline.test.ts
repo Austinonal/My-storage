@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAnim, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -228,4 +228,22 @@ test('text: loop replaces in/out and split keeps in on the left, out on the righ
   assert.ok(left.animIn && !left.animOut && !right.animIn && right.animOut);
   assert.equal(right.text, left.text);
   assertValid(p);
+});
+
+test('colour: filter intensity and adjust sliders clamp; text and audio refuse colour', () => {
+  const p = make();
+  const id = p.tracks[0].clips[0].id;
+  setFilter(p, id, 'film', 3);
+  setAdjust(p, id, { brightness: 250, contrast: -40.4, temperature: -999 });
+  const c = findClip(p, id) as MediaClip;
+  assert.deepEqual(c.filter, { presetId: 'film', intensity: 1 });
+  assert.equal(c.adjust.brightness, 100);
+  assert.equal(c.adjust.contrast, -40);
+  assert.equal(c.adjust.temperature, -100);
+  assert.equal(c.adjust.saturation, 0, 'other sliders untouched');
+  assertValid(p);
+  setFilter(p, id, null);
+  assert.equal(c.filter, null);
+  assert.equal((findClip(p, id) as MediaClip).filter, null);
+  assert.throws(() => setFilter(p, addText(p, 0), 'film'));
 });

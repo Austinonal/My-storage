@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Aspect, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
+import { SCHEMA_VERSION, type Adjust, type Aspect, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
@@ -209,6 +209,21 @@ export function setPhotoDuration(p: Project, clipId: string, duration: Us) {
   normalize(p);
 }
 
+function visualClip(p: Project, clipId: string) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' && c.kind !== 'photo') throw new Error('only videos and photos take colour');
+  return c;
+}
+
+export function setFilter(p: Project, clipId: string, presetId: string | null, intensity = 1) {
+  visualClip(p, clipId).filter = presetId ? { presetId, intensity: clamp(intensity, 0, 1) } : null;
+}
+
+export function setAdjust(p: Project, clipId: string, patch: Partial<Adjust>) {
+  const c = visualClip(p, clipId);
+  for (const [k, v] of Object.entries(patch) as [keyof Adjust, number][]) if (k in c.adjust) c.adjust[k] = clamp(Math.round(v), -100, 100);
+}
+
 export function setVolume(p: Project, clipId: string, volume: number) {
   const c = findClip(p, clipId);
   if (c.kind === 'text') throw new Error('text has no volume');
@@ -360,6 +375,8 @@ export function assertValid(p: Project) {
       if (!asset) fail(`missing asset ${c.assetId}`);
       if (c.speed < 0.1 || c.speed > 100) fail(`speed ${c.speed} on ${c.id}`);
       if (c.kind !== 'photo' && (c.sourceIn < 0 || sourceOut(c) > asset.duration)) fail(`source range outside asset on ${c.id}`);
+      if (c.kind !== 'audio' && c.filter && !(c.filter.intensity >= 0 && c.filter.intensity <= 1)) fail(`filter intensity on ${c.id}`);
+      if (c.kind !== 'audio' && Object.values(c.adjust).some((v) => !(v >= -100 && v <= 100))) fail(`adjust out of range on ${c.id}`);
       if (c.kind === 'audio' && c.fadeIn + c.fadeOut > c.duration) fail(`fades longer than ${c.id}`);
     }
   });

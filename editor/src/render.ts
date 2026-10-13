@@ -1,5 +1,6 @@
 import { SHAPES, glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
 import { textImage } from './text';
+import { graded } from './colour';
 import { fitContain } from './timeline.ts';
 import type { MediaClip, Project, TextClip, Us } from './schema';
 
@@ -169,7 +170,8 @@ export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, c
   ctx.fillRect(0, 0, W, H);
   if (clip && img) {
     const a = p.assets[clip.assetId];
-    drawClip(ctx, img, a.width, a.height, W, H, poseAt(clip, Math.min(clip.duration, Math.max(0, t - clip.start))));
+    const k = Math.min(1, Math.max(W, H) / Math.max(a.width, a.height)); // grade at output size, never above the source
+    drawClip(ctx, graded(img, a.width * k, a.height * k, clip), a.width, a.height, W, H, poseAt(clip, Math.min(clip.duration, Math.max(0, t - clip.start))));
   }
   const boxes: TextBox[] = [];
   for (const track of p.tracks) {
