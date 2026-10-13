@@ -39,13 +39,12 @@ export async function exportProject(
   const videoCodec = await getFirstEncodableVideoCodec(prefer, { width, height, frameRate: s.fps, quality: quality[s.bitrate] });
   if (!videoCodec) throw new ExportError('no-video-encoder');
 
-  // shortcut: renders the main track (videos and photos) plus audio tracks; overlays and text come with those features.
   const clips = p.tracks[0].clips as MediaClip[];
   const total = projectDuration(p);
   const audible = p.tracks
     .filter((t) => !t.muted)
-    .flatMap((t) => t.clips as (MediaClip | AudioClip)[])
-    .filter((c) => c.kind !== 'photo' && p.assets[c.assetId].hasAudio && c.volume > 0 && c.start < total);
+    .flatMap((t) => t.clips)
+    .filter((c): c is MediaClip | AudioClip => (c.kind === 'video' || c.kind === 'audio') && p.assets[c.assetId].hasAudio && c.volume > 0 && c.start < total);
   const audioCodec = audible.length ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE }) : null;
 
   const handle = await exportFile(p.id);

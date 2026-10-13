@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Film, Image, Music, Plus, ZoomIn, ZoomOut } from 'lucide-react';
+import { Film, Image, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration } from '../timeline.ts';
 import type { Clip, Project, Us } from '../schema';
 
@@ -9,7 +9,7 @@ const KIND = {
   video: { label: 'วิดีโอ', icon: Film, cls: 'bg-raised' },
   photo: { label: 'รูป', icon: Image, cls: 'bg-raised' },
   audio: { label: 'เสียง', icon: Music, cls: 'bg-clip-audio' },
-  text: { label: 'ข้อความ', icon: Film, cls: 'bg-clip-text' },
+  text: { label: 'ข้อความ', icon: Type, cls: 'bg-clip-text' },
   empty: { label: 'ช่องว่าง', icon: Plus, cls: 'border-dashed border-muted bg-surface text-muted' },
 } as const;
 
@@ -134,7 +134,7 @@ export function Timeline({
                 const Icon = k.icon;
                 const selected = c.id === selectedId;
                 const dragging = drag?.id === c.id;
-                const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text : project.assets[c.assetId]?.name ?? '';
+                const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text || 'ข้อความ' : project.assets[c.assetId]?.name ?? '';
                 return (
                   <button
                     key={c.id}

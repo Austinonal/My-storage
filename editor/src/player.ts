@@ -13,6 +13,7 @@ export class Player {
   onTick?: (t: Us, playing: boolean) => void;
   onError?: (e: unknown) => void;
   textBoxes: TextBox[] = []; // where text was drawn last, in canvas pixels
+  selectedText: string | null = null; // framed in the preview only, never in the export
 
   private p: Project | null = null;
   private sources = new Map<string, Source>(); // main-track media, by asset id
@@ -147,7 +148,21 @@ export class Player {
     const clip = this.mainAt(this.time);
     const img = clip ? this.sourceOf(clip) : null;
     if (!img && this.playing) return; // keep the last frame while the next clip seeks
-    this.textBoxes = renderFrame(this.canvas.getContext('2d')!, this.canvas.width, this.canvas.height, p, this.time, clip, img);
+    const ctx = this.canvas.getContext('2d')!;
+    this.textBoxes = renderFrame(ctx, this.canvas.width, this.canvas.height, p, this.time, clip, img);
+    const b = this.textBoxes.find((x) => x.id === this.selectedText);
+    if (!b) return;
+    const px = devicePixelRatio;
+    ctx.save();
+    ctx.translate(b.cx, b.cy);
+    ctx.rotate((b.rot * Math.PI) / 180);
+    ctx.lineWidth = 1.5 * px;
+    ctx.setLineDash([6 * px, 4 * px]);
+    ctx.strokeStyle = '#ffffff';
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 2 * px;
+    ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
+    ctx.restore();
   }
 
   resize(w: number, h: number) {

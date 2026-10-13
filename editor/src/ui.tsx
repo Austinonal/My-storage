@@ -223,7 +223,7 @@ export function Swatches({
           className={`size-8 rounded-pill border border-border ${c === value ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface' : ''} ${focus}`}
         />
       ))}
-      <input type="color" aria-label="Custom colour" value={value} onChange={(e) => onChange(e.target.value)} className="size-8 bg-transparent" />
+      <input type="color" aria-label={`${label}: สีอื่น`} value={value} onChange={(e) => onChange(e.target.value)} className="size-8 bg-transparent" />
     </div>
   );
 }
