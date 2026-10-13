@@ -413,6 +413,15 @@ export function addText(p: Project, at: Us, text = 'ข้อความ', styl
   return c.id;
 }
 
+// Many captions at once (pasted lines or a subtitle file), each looking like `like` when given.
+export function addCaptions(p: Project, caps: { start: Us; duration: Us; text: string }[], like?: TextClip) {
+  return caps.map((c) => {
+    const id = addText(p, c.start, c.text, like?.style ?? SUBTITLE, c.duration / SEC);
+    if (like) updateText(p, id, { transform: like.transform });
+    return id;
+  });
+}
+
 export function updateText(p: Project, clipId: string, patch: { text?: string; style?: Partial<TextStyle>; transform?: Partial<Transform> }) {
   const c = findClip(p, clipId);
   if (c.kind !== 'text') throw new Error('not a text clip');

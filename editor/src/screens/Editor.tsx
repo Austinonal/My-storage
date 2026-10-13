@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, Captions, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
@@ -35,11 +35,12 @@ import { AnimationSheet, type Still } from './AnimationSheet';
 import { Timeline } from './Timeline';
 import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
+import { CaptionSheet } from './CaptionSheet';
 import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | 'captions' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -442,6 +443,7 @@ export function Editor({ id }: { id: string }) {
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
             <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(Math.min(time, Math.max(0, total - SEC)))} />
+            <ToolButton icon={Captions} label="คำบรรยาย" disabled={!p || busy} active={sheet === 'captions'} onClick={() => setSheet('captions')} />
             <ToolButton icon={Layers} label="ภาพซ้อน" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
             <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
           </>
@@ -499,6 +501,16 @@ export function Editor({ id }: { id: string }) {
       )}
       {p && visual && (
         <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} still={still} onApplyAll={() => colourToAll(visual)} />
+      )}
+      {p && (
+        <CaptionSheet
+          open={sheet === 'captions'}
+          onClose={() => setSheet(null)}
+          project={p}
+          time={time}
+          onSeek={(t) => player?.seek(t)}
+          onAddHere={() => newText(Math.min(time, Math.max(0, total - SEC)))}
+        />
       )}
       {p && overlaySel && (
         <BottomSheet open={sheet === 'place'} title="จัดวางภาพซ้อน" onClose={() => setSheet(null)} modal={false}>

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -313,5 +313,17 @@ test('overlays: own track under the text, free in time, never overlapping, trans
   assertValid(p);
   const right = splitAt(p, a, 11 * SEC);
   assert.ok(right && findClip(p, right).start === 11 * SEC);
+  assertValid(p);
+});
+
+test('captions: many at once, styled like an existing one, overlaps go to another text track', () => {
+  const p = make();
+  const first = addText(p, 0, 'แรก');
+  updateText(p, first, { style: { colour: '#ffd84dff' }, transform: { y: 0.1 } });
+  const ids = addCaptions(p, [{ start: 0.5 * SEC, duration: SEC, text: 'ก' }, { start: 3 * SEC, duration: SEC, text: 'ข' }], findClip(p, first) as TextClip);
+  const a = findClip(p, ids[0]) as TextClip;
+  assert.equal(a.style.colour, '#ffd84dff');
+  assert.equal(a.transform.y, 0.1);
+  assert.equal(p.tracks.filter((t) => t.kind === 'text').length, 2, 'the first caption overlaps the existing text');
   assertValid(p);
 });
