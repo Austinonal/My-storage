@@ -1,24 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AW, buildTemplate, detectCuts, estimateMotion, features, type Frame } from './analyze.ts';
+import { AW, buildTemplate, detectCuts, detectDissolves, estimateMotion, features, type Frame } from './analyze.ts';
 import { getPreset } from './anim.ts';
 
 const W = AW;
 const H = 114;
 const FPS = 30;
 
-type Look = { seed: number; s?: number; dx?: number; dy?: number; bright?: number; flat?: number };
+type Look = { seed: number; s?: number; dx?: number; dy?: number; rot?: number; bright?: number; flat?: number; mix?: [Look, number] };
 
 // A textured picture, transformed like our compositor does: content moved by dx/dy (canvas fractions), scaled by s, black outside.
-function frame(look: Look, t: number): Frame {
-  const { seed, s = 1, dx = 0, dy = 0, bright = 1 } = look;
+function pixels(look: Look) {
+  const { seed, s = 1, dx = 0, dy = 0, rot = 0, bright = 1 } = look;
   const rgba = new Uint8ClampedArray(W * H * 4);
   const cx = (W - 1) / 2;
   const cy = (H - 1) / 2;
+  const cs = Math.cos((-rot * Math.PI) / 180);
+  const sn = Math.sin((-rot * Math.PI) / 180);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const u = (x - cx - dx * W) / s + cx;
-      const v = (y - cy - dy * H) / s + cy;
+      const px = x - cx - dx * W;
+      const py = y - cy - dy * H;
+      const u = (px * cs - py * sn) / s + cx;
+      const v = (px * sn + py * cs) / s + cy;
       let val = 0;
       if (look.flat !== undefined) val = look.flat;
       else if (u >= 0 && u < W && v >= 0 && v < H) {
@@ -32,7 +36,16 @@ function frame(look: Look, t: number): Frame {
       rgba[i + 3] = 255;
     }
   }
-  return features(rgba, W, H, t);
+  if (look.mix) {
+    const [other, a] = look.mix;
+    const o = pixels(other);
+    for (let i = 0; i < rgba.length; i++) rgba[i] = rgba[i] * (1 - a) + o[i] * a;
+  }
+  return rgba;
+}
+
+function frame(look: Look, t: number): Frame {
+  return features(pixels(look), W, H, t);
 }
 
 function clip(looks: Look[], t0 = 0) {
@@ -46,7 +59,7 @@ test('motion: a shift and a zoom are measured', () => {
   assert.ok(Math.abs(m.s - 1) < 0.015, `s ${m.s}`);
   const z = estimateMotion(a, frame({ seed: 1, s: 1.05 }, 1 / FPS));
   assert.ok(Math.abs(z.s - 1.05) < 0.015, `s ${z.s}`);
-  assert.deepEqual(estimateMotion(frame({ seed: 1, flat: 0 }, 0), a), { s: 1, dx: 0, dy: 0 }, 'black frame gives no motion');
+  assert.deepEqual(estimateMotion(frame({ seed: 1, flat: 0 }, 0), a), { s: 1, dx: 0, dy: 0, r: 0 }, 'black frame gives no motion');
 });
 
 test('cuts: hard cut found, a flash is not a cut, a black gap is', () => {
@@ -93,4 +106,51 @@ test('a spring from the left reads as the spring preset, not a shake', () => {
   const slots = buildTemplate(f, f.slice(1).map((b, i) => estimateMotion(f[i], b)), looks.length / FPS);
   assert.equal(slots.length, 2);
   assert.equal(slots[1].in?.presetId, 'in:elastic-right', JSON.stringify(slots.map((s) => s.in?.presetId)));
+});
+
+test('rotation: a turn is measured, a slide or zoom is not a turn', () => {
+  const a = frame({ seed: 1 }, 0);
+  for (const deg of [6, -15, 40]) {
+    const m = estimateMotion(a, frame({ seed: 1, rot: deg }, 1 / FPS));
+    assert.ok(Math.abs(m.r - deg) < 1.5, `turn ${deg}: ${m.r}`);
+  }
+  assert.ok(Math.abs(estimateMotion(a, frame({ seed: 1, dx: 0.05 }, 1 / FPS)).r) < 1, 'slide');
+  assert.ok(Math.abs(estimateMotion(a, frame({ seed: 1, s: 1.06 }, 1 / FPS)).r) < 1, 'zoom');
+});
+
+const read = (looks: Look[]) => {
+  const f = clip(looks);
+  const slots = buildTemplate(f, f.slice(1).map((b, i) => estimateMotion(f[i], b)), looks.length / FPS);
+  return { slots, summary: JSON.stringify(slots.map((s) => [s.start.toFixed(2), s.in?.presetId, s.out?.presetId, s.combo?.presetId])) };
+};
+
+test('template: spin in, pendulum in, slow tilt combo', () => {
+  const ease = (p: number) => 1 - (1 - p) ** 3;
+  const { slots, summary } = read([
+    ...Array.from({ length: 30 }, (_, i) => ({ seed: 2, rot: i < 15 ? -180 * (1 - ease(i / 15)) : 0, s: i < 15 ? 0.5 + 0.5 * ease(i / 15) : 1 })),
+    ...Array.from({ length: 45 }, (_, i) => ({ seed: 9, bright: 0.8, rot: i < 18 ? 30 * Math.cos((i / 18) * Math.PI * 2.5) * (1 - i / 18) : 0 })),
+    ...Array.from({ length: 36 }, (_, i) => ({ seed: 5, bright: 0.9, s: 1.15, rot: 10 * (i / 35) })),
+  ]);
+  assert.equal(slots.length, 3, summary);
+  assert.equal(slots[0].in?.presetId, 'in:spin', summary);
+  assert.equal(slots[1].in?.presetId, 'in:pendulum', summary);
+  assert.ok(Math.abs(slots[2].start - 75 / FPS) < 1e-6, summary);
+  assert.equal(slots[2].combo?.presetId, 'combo:tilt-right', summary);
+});
+
+test('dissolves: a cross-fade splits two shots in its middle with a fade on each side; a fade-in is not a dissolve', () => {
+  const A: Look = { seed: 1 };
+  const B: Look = { seed: 6, bright: 0.8 };
+  const looks: Look[] = [...Array(20).fill(A), ...Array.from({ length: 12 }, (_, i) => ({ ...A, mix: [B, (i + 1) / 13] as [Look, number] })), ...Array(20).fill(B)];
+  const f = clip(looks);
+  const d = detectDissolves(f, FPS);
+  assert.equal(d.length, 1, JSON.stringify(d));
+  assert.ok(Math.abs(d[0].at - 26) <= 1 && d[0].from <= 21 && d[0].to >= 30, JSON.stringify(d));
+  const { slots, summary } = read(looks);
+  assert.equal(slots.length, 2, summary);
+  assert.equal(slots[0].out?.presetId, 'out:fade', summary);
+  assert.equal(slots[1].in?.presetId, 'in:fade', summary);
+  assert.ok(Math.abs(slots[1].start - 26 / FPS) < 0.05, summary);
+  const fadeIn = clip([...Array.from({ length: 12 }, (_, i) => ({ seed: 1, bright: i / 12 })), ...Array(12).fill({ seed: 1 })]);
+  assert.deepEqual(detectDissolves(fadeIn, FPS), []);
 });

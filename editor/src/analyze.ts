@@ -3,6 +3,8 @@
 
 export const AW = 64; // analysis width in pixels
 const TW = 16; // thumbnail width for frame differences
+const RN = 64; // angle bins around the centre, for rotation
+const RING = [0.35, 0.55, 0.75, 0.95]; // radii, fractions of half the short side
 
 export interface Frame {
   t: number; // seconds
@@ -12,12 +14,14 @@ export interface Frame {
   thumb: Float32Array; // TW-wide luma
   col: Float32Array; // mean luma per column
   row: Float32Array; // mean luma per row
+  ring: Float32Array; // mean luma per angle around the centre, clockwise from 3 o'clock
 }
 
 export interface Motion {
   s: number; // scale from one frame to the next, about the centre
   dx: number; // content shift, fraction of width
   dy: number;
+  r: number; // rotation, degrees clockwise
 }
 
 export interface Guess {
@@ -74,7 +78,25 @@ export function features(rgba: Uint8ClampedArray | Uint8Array, w: number, h: num
   for (let y = 0; y < th; y++) {
     for (let x = 0; x < TW; x++) thumb[y * TW + x] = luma[Math.floor(((y + 0.5) * h) / th) * w + Math.floor(((x + 0.5) * w) / TW)];
   }
-  return { t, mean: sum / n, sharp: m ? lap2 / m - (lap / m) ** 2 : 0, hist, thumb, col, row };
+  const ring = new Float32Array(RN);
+  const cx = (w - 1) / 2;
+  const cy = (h - 1) / 2;
+  const half = Math.min(w, h) / 2;
+  for (let k = 0; k < RN; k++) {
+    const c = Math.cos((k * 2 * Math.PI) / RN);
+    const s = Math.sin((k * 2 * Math.PI) / RN);
+    for (const f of RING) {
+      const x = Math.min(w - 1.001, Math.max(0, cx + c * f * half));
+      const y = Math.min(h - 1.001, Math.max(0, cy + s * f * half));
+      const x0 = Math.floor(x);
+      const y0 = Math.floor(y);
+      const i = y0 * w + x0;
+      const top = luma[i] + (luma[i + 1] - luma[i]) * (x - x0);
+      const bottom = luma[i + w] + (luma[i + w + 1] - luma[i + w]) * (x - x0);
+      ring[k] += (top + (bottom - top) * (y - y0)) / RING.length;
+    }
+  }
+  return { t, mean: sum / n, sharp: m ? lap2 / m - (lap / m) ** 2 : 0, hist, thumb, col, row, ring };
 }
 
 const histDiff = (a: Frame, b: Frame) => a.hist.reduce((s, v, i) => s + Math.abs(v - b.hist[i]), 0);
@@ -178,17 +200,50 @@ function match1d(pa: Float32Array, pb: Float32Array) {
   return best;
 }
 
+// Turn of the angular profile around the centre. It only counts when a turn explains the change well:
+// slides and new content change the profile without any single shift fitting it.
+function estimateRotation(pa: Float32Array, pb: Float32Array, gain = 0.35) {
+  if (flat(pa) || flat(pb)) return 0;
+  const a = normalise(pa);
+  const b = normalise(pb);
+  const n = a.length;
+  const at = (q: number) => {
+    const w = ((q % n) + n) % n;
+    const i = Math.floor(w);
+    return a[i] + (a[(i + 1) % n] - a[i]) * (w - i);
+  };
+  const cost = (s: number) => {
+    let e = 0;
+    for (let x = 0; x < n; x++) e += (b[x] - at(x - s)) ** 2;
+    return e / n;
+  };
+  const still = cost(0);
+  let best = 0;
+  let low = still;
+  const consider = (s: number) => {
+    const c = cost(s);
+    if (c < low) {
+      low = c;
+      best = s;
+    }
+  };
+  for (let s = -n / 4; s <= n / 4; s += 0.5) consider(s);
+  for (let s = best - 0.5; s <= best + 0.501; s += 0.1) consider(s);
+  if (best === 0 || low > 0.3 || low > gain * still) return 0;
+  return (best * 360) / n;
+}
+
 export function estimateMotion(a: Frame, b: Frame): Motion {
   const x = match1d(a.col, b.col);
   const y = match1d(a.row, b.row);
-  return { s: (x.s + y.s) / 2, dx: x.d / a.col.length, dy: y.d / a.row.length };
+  return { s: (x.s + y.s) / 2, dx: x.d / a.col.length, dy: y.d / a.row.length, r: estimateRotation(a.ring, b.ring) };
 }
 
-const size = (m: Motion) => Math.abs(m.dx) + Math.abs(m.dy) + Math.abs(m.s - 1);
+const size = (m: Motion) => Math.abs(m.dx) + Math.abs(m.dy) + Math.abs(m.s - 1) + Math.abs(m.r) * 0.004;
 
 // `base` is the shot's typical movement: footage that always moves (handheld, animated) needs more to count as an effect.
 const moving = (m: Motion, base = 0) =>
-  size(m) > 3 * base && (Math.abs(m.dx) > 0.004 || Math.abs(m.dy) > 0.004 || Math.abs(m.s - 1) > 0.008);
+  size(m) > 3 * base && (Math.abs(m.dx) > 0.004 || Math.abs(m.dy) > 0.004 || Math.abs(m.s - 1) > 0.008 || Math.abs(m.r) > 0.8);
 
 // Leading run of motion: stops at the first two still pairs in a row.
 function activeRun(ms: Motion[], base: number) {
@@ -206,19 +261,29 @@ function describe(ms: Motion[]) {
   let dy = 0;
   let flipsX = 0;
   let flipsY = 0;
+  let flipsR = 0;
   let ax = 0;
   let ay = 0;
+  let r = 0;
+  let ar = 0;
+  let lastR = 0;
   ms.forEach((m, i) => {
     s *= m.s;
     dx += m.dx;
     dy += m.dy;
+    r += m.r;
     ax += Math.abs(m.dx);
     ay += Math.abs(m.dy);
+    ar += Math.abs(m.r);
     if (i && Math.sign(m.dx) !== Math.sign(ms[i - 1].dx) && Math.abs(m.dx) > 0.003) flipsX++;
     if (i && Math.sign(m.dy) !== Math.sign(ms[i - 1].dy) && Math.abs(m.dy) > 0.003) flipsY++;
+    if (Math.abs(m.r) > 0.5) {
+      if (lastR && Math.sign(m.r) !== Math.sign(lastR)) flipsR++;
+      lastR = m.r;
+    }
   });
   const n = Math.max(1, ms.length);
-  return { s, dx, dy, flipsX, flipsY, ax: ax / n, ay: ay / n };
+  return { s, dx, dy, r, flipsX, flipsY, flipsR, ax: ax / n, ay: ay / n, ar: ar / n };
 }
 
 // Motion seen at one end of a shot -> preset id, in the direction the content actually moved.
@@ -236,6 +301,11 @@ function longestPush(ms: Motion[], axis: 'dx' | 'dy') {
 
 function motionPreset(slot: 'in' | 'out', ms: Motion[]): string | null {
   const m = describe(ms);
+  // A spin: bigger turns read as the bigger presets. (Shifts measured while turning are not reliable, so no roll here.)
+  if (Math.abs(m.r) > 45) {
+    const turned = Math.abs(m.r);
+    return `${slot}:${turned >= 450 ? 'vortex' : turned >= 270 ? 'zoom-spin' : 'spin'}`;
+  }
   // A spring is one big push and then wobbles in the same axis.
   const push = longestPush(ms, 'dx');
   const swingBack = longestPush(ms.map((x) => ({ ...x, dx: Math.sign(x.dx) === Math.sign(push) ? 0 : x.dx })), 'dx');
@@ -259,14 +329,22 @@ function guessEnd(slot: 'in' | 'out', f: Frame[], ms: Motion[], fps: number): Gu
   const fr = slot === 'in' ? f : [...f].reverse();
   const mo = slot === 'in' ? ms : [...ms].reverse();
   const medMean = median(f.map((x) => x.mean));
-  const medSharp = median(f.map((x) => x.sharp));
   const limit = Math.max(2, Math.floor(f.length * 0.45));
+  // Sharpness is compared with the settled part next to the effect, not the whole shot (turning content has sharp black edges).
+  const medSharp = median(fr.slice(Math.floor(limit / 2), limit + 1).map((x) => x.sharp));
   const until = (ok: (x: Frame) => boolean) => {
     let k = 0;
     while (k < limit && !ok(fr[k])) k++;
     return Math.max(1, k) / fps;
   };
   const window = mo.slice(0, limit);
+  // A swing back and forth needs the whole swing to be seen, so it is read on the window, not the first run of motion.
+  const turns = describe(window);
+  if (turns.flipsR >= 2 && turns.ar > 1.5 && Math.abs(turns.r) < 60) {
+    let last = window.length - 1;
+    while (last > 0 && Math.abs(window[last].r) <= 0.5) last--;
+    return { presetId: `${slot}:pendulum`, seconds: (last + 2) / fps };
+  }
   const run = activeRun(window, median(ms.map(size)));
   if (run >= 2) {
     // Out runs were collected backwards; put them back in time order so directions read forwards.
@@ -286,6 +364,7 @@ function guessEnd(slot: 'in' | 'out', f: Frame[], ms: Motion[], fps: number): Gu
 function guessCombo(f: Frame[], ms: Motion[], fps: number, seconds: number): Guess | null {
   if (ms.length >= 4 && ms.filter((x) => moving(x)).length >= ms.length * 0.6) {
     const m = describe(ms);
+    if (m.flipsR >= 2 && m.ar > 1) return { presetId: 'combo:pendulum', seconds };
     const amp = m.ax + m.ay;
     if (m.flipsX + m.flipsY >= ms.length / 4 && amp > 0.004) return { presetId: amp > 0.012 ? 'combo:earthquake' : 'combo:jitter', seconds };
     const scales = ms.map((x) => x.s);
@@ -300,6 +379,15 @@ function guessCombo(f: Frame[], ms: Motion[], fps: number, seconds: number): Gue
   const share = (ok: (m: Motion) => boolean) => spaced.filter(ok).length / spaced.length;
   const s = spaced.reduce((acc, m) => acc * m.s, 1);
   const dx = spaced.reduce((acc, m) => acc + m.dx, 0);
+  // Slow turns: per frame they are below what the angle profile can see, so measure them half a second at a time.
+  const h = Math.max(2, Math.round(fps * 0.5));
+  const turns: number[] = [];
+  // A small turn only beats standing still by a little when other things move too; every step agreeing is the real test.
+  for (let i = 0; i + h < f.length; i += h) turns.push(estimateRotation(f[i].ring, f[i + h].ring, 0.75));
+  const r = turns.reduce((acc, x) => acc + x, 0);
+  if (turns.length >= 2 && Math.abs(r) > 3 && turns.every((x) => Math.sign(x) === Math.sign(r) && Math.abs(x) > 0.5)) {
+    return { presetId: Math.abs(r) > 90 ? 'combo:slow-spin' : r < 0 ? 'combo:tilt-left' : 'combo:tilt-right', seconds };
+  }
   if (s > 1.08 && share((m) => m.s > 1.004) >= 0.7) return { presetId: 'combo:kb-in', seconds };
   if (s < 0.93 && share((m) => m.s < 0.996) >= 0.7) return { presetId: 'combo:kb-out', seconds };
   if (Math.abs(dx) > 0.08 && share((m) => Math.sign(m.dx) === Math.sign(dx) && Math.abs(m.dx) > 0.004) >= 0.7) {
@@ -308,11 +396,83 @@ function guessCombo(f: Frame[], ms: Motion[], fps: number, seconds: number): Gue
   return null;
 }
 
+// How well `m` is a mix of `a` and `b` (a dissolve frame): the mix amount, and the leftover as a share of how far apart a and b are.
+function blend(a: Float32Array, b: Float32Array, m: Float32Array) {
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < a.length; i++) {
+    num += (m[i] - a[i]) * (b[i] - a[i]);
+    den += (b[i] - a[i]) ** 2;
+  }
+  const alpha = den > 0 ? Math.min(1, Math.max(0, num / den)) : 0;
+  let err = 0;
+  let span = 0;
+  for (let i = 0; i < a.length; i++) {
+    err += Math.abs(m[i] - (a[i] + alpha * (b[i] - a[i])));
+    span += Math.abs(b[i] - a[i]);
+  }
+  return { alpha, rel: err / Math.max(1e-6, span) };
+}
+
+export interface Dissolve {
+  from: number; // first frame that mixes in the next shot
+  at: number; // the middle: where the slots split
+  to: number; // last mixed frame
+}
+
+// Cross-dissolves: two different pictures with frames between them that are a growing mix of both. Cut detection misses them,
+// because no single step is sudden.
+export function detectDissolves(f: Frame[], fps: number): Dissolve[] {
+  const r0 = Math.max(2, Math.round(fps * 0.12));
+  const maxSpan = Math.round(fps * 2);
+  const out: Dissolve[] = [];
+  const isMix = (a: number, b: number, j: number, lo = 0.02) => {
+    const x = blend(f[a].thumb, f[b].thumb, f[j].thumb);
+    return x.rel < 0.15 && x.alpha > lo && x.alpha < 1 - lo;
+  };
+  // Mixed frames fool the profile matcher by a fraction of a pixel; real motion between the ends is far bigger.
+  const settled = (m: Motion) => Math.abs(m.s - 1) < 0.012 && Math.abs(m.dx) < 0.02 && Math.abs(m.dy) < 0.02 && Math.abs(m.r) < 1;
+  // Layout only: the same picture getting brighter (a fade) is not two pictures.
+  const layout = (a: Frame, b: Frame) => {
+    const na = normalise(a.thumb);
+    const nb = normalise(b.thumb);
+    let d = 0;
+    for (let i = 0; i < na.length; i++) d += Math.abs(na[i] - nb[i]);
+    return d / na.length / 2;
+  };
+  for (let i = r0; i + r0 < f.length; i++) {
+    let a = i - r0;
+    let b = i + r0;
+    if (flat(f[a].thumb) || flat(f[b].thumb)) continue; // fades through black are handled as fades
+    const ends = change(f[a], f[b]);
+    if (ends < 0.3 || layout(f[a], f[b]) < 0.25) continue;
+    let ok = true;
+    let prev = 0;
+    for (let j = a + 1; j < b && ok; j++) {
+      const x = blend(f[a].thumb, f[b].thumb, f[j].thumb);
+      // Zooms and slides can look like a mix of their ends; a dissolve does not move.
+      ok = x.rel < 0.15 && x.alpha >= prev - 0.05 && change(f[j - 1], f[j]) < 0.5 * ends && settled(estimateMotion(f[j - 1], f[j]));
+      prev = x.alpha;
+    }
+    const mid = blend(f[a].thumb, f[b].thumb, f[i].thumb).alpha;
+    if (!ok || mid < 0.25 || mid > 0.75) continue;
+    // Grow to where the pictures stop changing.
+    while (a > 0 && b - a < maxSpan && isMix(a - 1, b, a)) a--;
+    while (b + 1 < f.length && b - a < maxSpan && isMix(a, b + 1, b)) b++;
+    out.push({ from: a + 1, at: Math.round((a + b + 1) / 2), to: b - 1 });
+    i = b;
+  }
+  return out;
+}
+
 // `motions[i]` is the motion from frame i to i + 1 (pairs across a cut are ignored). `end` is the video's length.
 export function buildTemplate(f: Frame[], motions: Motion[], end: number): Slot[] {
   if (f.length === 0) return [];
   const t0 = f[0].t;
-  const bounds = [0, ...detectCuts(f), f.length];
+  const fpsAll = f.length > 1 ? (f.length - 1) / Math.max(1e-6, f[f.length - 1].t - t0) : 30;
+  const dissolves = detectDissolves(f, fpsAll);
+  const cuts = detectCuts(f).filter((c) => !dissolves.some((d) => c >= d.from - 2 && c <= d.to + 2));
+  const bounds = [0, ...[...cuts, ...dissolves.map((d) => d.at)].sort((x, y) => x - y), f.length];
   const slots: Slot[] = [];
   for (let k = 0; k + 1 < bounds.length; k++) {
     const a = bounds[k];
@@ -323,8 +483,11 @@ export function buildTemplate(f: Frame[], motions: Motion[], end: number): Slot[
     const stop = b < f.length ? f[b].t - t0 : end - t0;
     const seconds = stop - start;
     const fps = shot.length > 1 ? (shot.length - 1) / Math.max(1e-6, shot[shot.length - 1].t - shot[0].t) : 30;
-    const inG = shot.length >= 3 ? guessEnd('in', shot, ms, fps) : null;
-    const outG = shot.length >= 3 ? guessEnd('out', shot, ms, fps) : null;
+    // shortcut: a dissolve becomes a fade out + fade in (through black); real overlapping transitions need two clips drawn at once
+    const dIn = dissolves.find((d) => d.at === a);
+    const dOut = dissolves.find((d) => d.at === b);
+    const inG = dIn ? { presetId: 'in:fade', seconds: (dIn.to - dIn.at + 1) / fps } : shot.length >= 3 ? guessEnd('in', shot, ms, fps) : null;
+    const outG = dOut ? { presetId: 'out:fade', seconds: (dOut.at - dOut.from) / fps } : shot.length >= 3 ? guessEnd('out', shot, ms, fps) : null;
     const combo = inG || outG ? null : guessCombo(shot, ms, fps, seconds);
     const cap = (g: Guess | null, share: number) => g && { ...g, seconds: Math.min(g.seconds, seconds * share) };
     slots.push({ start, seconds, in: cap(inG, outG ? 0.5 : 0.9), out: cap(outG, inG ? 0.5 : 0.9), combo });
