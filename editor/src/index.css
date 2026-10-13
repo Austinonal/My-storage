@@ -1,7 +1,18 @@
 @import 'tailwindcss';
 @import './tokens.css';
 
+/* Android draws the app under the status and navigation bars (edge to edge). Capacitor injects the bar sizes as
+   --safe-area-inset-*; browsers give env(). Whichever is set wins. */
+:root {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px));
+}
+
 body {
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);

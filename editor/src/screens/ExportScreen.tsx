@@ -95,7 +95,7 @@ export function ExportScreen({ id }: { id: string }) {
         }
         title="ส่งออกวิดีโอ"
       />
-      <main className="flex flex-col gap-6 px-4 pb-8">
+      <main className="flex flex-col gap-6 px-4 pb-[calc(2rem+var(--safe-bottom))]">
         <fieldset disabled={busy} className="flex flex-col gap-2">
           <legend className="text-sm">ความละเอียด</legend>
           <CategoryTabs items={['720p', '1080p']} value={`${height}p`} onChange={(v) => setHeight(parseInt(v) as 720 | 1080)} />

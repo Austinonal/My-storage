@@ -55,7 +55,7 @@ export function ToolButton({
 
 export function BottomToolbar({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div role="toolbar" aria-label={label} className="flex h-16 snap-x overflow-x-auto border-t border-border bg-surface px-2">
+    <div role="toolbar" aria-label={label} className="box-content flex h-16 shrink-0 snap-x overflow-x-auto border-t border-border bg-surface px-2 pb-(--safe-bottom)">
       {children}
     </div>
   );
@@ -63,7 +63,7 @@ export function BottomToolbar({ label, children }: { label: string; children: Re
 
 export function TopBar({ left, title, right }: { left?: ReactNode; title: string; right?: ReactNode }) {
   return (
-    <header className="flex h-12 items-center gap-2 bg-bg px-2">
+    <header className="box-content flex h-12 shrink-0 items-center gap-2 bg-bg px-2 pt-(--safe-top)">
       <div className="flex flex-1">{left}</div>
       <h1 className="truncate text-base font-semibold">{title}</h1>
       <div className="flex flex-1 justify-end">{right}</div>
@@ -113,7 +113,7 @@ export function BottomSheet({
           เสร็จ
         </Button>
       </div>
-      <div className="min-h-0 overflow-y-auto px-4 pb-4">{children}</div>
+      <div className="min-h-0 overflow-y-auto px-4 pb-[calc(1rem+var(--safe-bottom))]">{children}</div>
     </dialog>
   );
 }

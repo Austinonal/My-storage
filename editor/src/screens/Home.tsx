@@ -55,7 +55,7 @@ export function Home() {
   return (
     <div className="mx-auto flex min-h-dvh max-w-(--size-sheet-width) flex-col">
       <TopBar title="โปรเจกต์ของฉัน" />
-      <main className="flex flex-1 flex-col gap-6 px-4 pb-8">
+      <main className="flex flex-1 flex-col gap-6 px-4 pb-[calc(2rem+var(--safe-bottom))]">
         <Button loading={busy} onClick={() => picker.current?.click()}>
           {!busy && <Plus size={20} aria-hidden />}
           {busy ? 'กำลังนำเข้า…' : 'โปรเจกต์ใหม่'}
