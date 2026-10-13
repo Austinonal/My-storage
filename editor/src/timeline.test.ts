@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MediaAsset, MediaClip } from './schema.ts';
-import { SEC, addAudio, addMedia, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, setAnim, setPhotoDuration, splitAt, trimClip } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAnim, setPhotoDuration, splitAt, trimClip, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -150,5 +150,47 @@ test('photo duration clamps and squeezes its animations', () => {
   setPhotoDuration(p, ph, 999 * SEC);
   assert.equal(c.duration, 120 * SEC);
   assert.throws(() => trimClip(p, ph, 'out', SEC));
+  assertValid(p);
+});
+
+const hole: MediaAsset = { ...photo, id: 'hole', name: 'empty.png', placeholder: true };
+const slot = (seconds: number, extra: Partial<TemplateSlot> = {}): TemplateSlot => ({ seconds, in: null, out: null, combo: null, ...extra });
+
+test('template: own clips fill the first slots, the rest are placeholders with the template animations', () => {
+  const p = make();
+  addMedia(p, [photo]);
+  applyTemplate(p, [
+    slot(0.8, { in: { presetId: 'in:fade', seconds: 0.3 } }),
+    slot(1.2, { combo: { presetId: 'combo:kb-in', seconds: 1.2 } }),
+    slot(0.5, { out: { presetId: 'out:slide-left', seconds: 2 } }),
+  ], hole);
+  const [a, b, c] = p.tracks[0].clips as MediaClip[];
+  assert.equal(a.assetId, 'a1');
+  assert.equal(a.duration, 0.8 * SEC);
+  assert.equal(a.animIn?.presetId, 'in:fade');
+  assert.equal(b.assetId, 'ph');
+  assert.equal(b.animCombo?.duration, 1.2 * SEC);
+  assert.equal(c.assetId, 'hole');
+  assert.equal(c.animOut?.duration, 0.5 * SEC, 'an animation longer than its slot is squeezed');
+  assert.equal(projectDuration(p), 2.5 * SEC);
+  assertValid(p);
+  // Applying again reuses the same own clips and drops old placeholders.
+  applyTemplate(p, [slot(1), slot(1)], hole);
+  assert.deepEqual(p.tracks[0].clips.map((x) => x.assetId), ['a1', 'ph']);
+  assertValid(p);
+});
+
+test('template: a video shorter than its slot ends early; replacing keeps place and animations', () => {
+  const p = make();
+  applyTemplate(p, [slot(30), slot(2, { in: { presetId: 'in:pop', seconds: 0.5 } })], hole);
+  const [v, h] = p.tracks[0].clips as MediaClip[];
+  assert.equal(v.duration, 10 * SEC);
+  replaceClip(p, h.id, photo);
+  const r = p.tracks[0].clips[1] as MediaClip;
+  assert.equal(r.kind, 'photo');
+  assert.equal(r.duration, 2 * SEC);
+  assert.equal(r.animIn?.presetId, 'in:pop');
+  replaceClip(p, r.id, { ...asset, id: 'short', duration: 1 * SEC });
+  assert.equal((p.tracks[0].clips[1] as MediaClip).duration, 1 * SEC);
   assertValid(p);
 });

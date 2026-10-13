@@ -110,6 +110,9 @@ export function ExportScreen({ id }: { id: string }) {
           />
         </fieldset>
 
+        {p && (p.tracks[0].clips as { assetId: string }[]).some((c) => p.assets[c.assetId].placeholder) && (
+          <p role="alert" className="text-sm text-warning">ยังมีช่องว่างในโปรเจกต์ ช่องนั้นจะออกมาเป็นภาพว่างในวิดีโอ</p>
+        )}
         {job.state === 'idle' && (
           <Button disabled={!p} onClick={() => void start()}>
             ส่งออก

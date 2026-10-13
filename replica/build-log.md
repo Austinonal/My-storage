@@ -2,6 +2,17 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — template from any edited clip (our own addition)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| Template sheet | done | dissolves between shots are not detected as cuts; rotation (spin) not measured; art/particle effects cannot be matched | the end of a slide looked like a cut, a fade looked like a cut, the test pattern's own motion looked like an effect, slow zooms were below per-frame precision; fixed with a structure-only cut score, a "cuts are sudden" rule, a per-shot motion baseline, and 0.2 s-spaced measurement for combos |
+| S04 Replace | done | none | none |
+
+- How it works (all on the device, `analyze.ts` + `reference.ts`): decode the reference at 64 px wide; per frame a colour histogram, a brightness-normalised thumbnail, row/column brightness profiles and sharpness. Cuts = sudden layout changes, ignoring flashes and fades, plus black gaps. Motion = scale and shift from the 1-D profiles (coarse ±16 px, then fine 0.25 px / 0.5 %). Each shot's start and end are matched to our presets: slide (4 directions), spring, shake, zoom in/out, fade, from/to black, flash, blur; whole-shot motion to slow zoom in/out, pan, jitter, earthquake, beat zoom.
+- Apply: your clips fill the first slots in order, the rest become dashed "empty" slots; each slot takes the detected animation; optional: add the reference's sound (off by default, for music you may use). Replace swaps a slot's picture/video and keeps its length and animations. Export warns while empty slots remain.
+- Checked: 26 unit tests (synthetic shots with known motion; the full catalogue); e2e on a 4-shot ffmpeg reference with known edits: all 4 cuts at exactly 1.5 s and every effect matched (from black, slow zoom in, slide from the right, to black), analysis 1.4 s for 6 s of video; the app's own exports read back correctly (zoom-in + fade-out; spring from the left + a plain cut); all four e2e suites green, zero console errors.
+
 ## 2026-10-13 — timeline: photos, audio, move, split, delete; more animations (parity 27.9, must-haves 12 of 34)
 
 | ID | status | missing | harder than expected |

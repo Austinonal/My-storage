@@ -11,7 +11,7 @@ Delete clip,timeline,must,yes,yes,the main track keeps at least one clip
 Reorder clips by drag,timeline,must,yes,yes,"select, then drag; or arrow keys"
 Undo and redo,timeline,must,yes,yes,"snapshot undo, a slider drag is one step"
 Snap to playhead and clip edges,timeline,should,yes,no,guess
-Replace clip media keeping edits,clip,should,yes,no,source 18
+Replace clip media keeping edits,clip,should,yes,yes,"keeps place, length and animations; fills template slots"
 Speed normal 0.1x to 100x,clip,must,yes,no,Play listing
 Speed curve presets and custom curve,clip,should,yes,no,Play listing
 Optical-flow slow motion,clip,could,yes,no,needs frame interpolation
@@ -19,7 +19,7 @@ Reverse clip,clip,must,yes,no,source 21
 Freeze frame,clip,should,yes,no,Play listing
 Crop rotate mirror,clip,must,yes,no,S23
 Clip volume and mute,clip,must,yes,partial,0-200 % (0 = mute); preview caps at 100 %
-Clip In Out Combo animations,clip,should,yes,yes,"287 own presets (100 in / 86 out / 101 combo), live tile previews, duration slider; art/particle presets not built"
+Clip In Out Combo animations,clip,should,yes,yes,"291 own presets (100 in / 86 out / 105 combo), live tile previews, duration slider; art/particle presets not built"
 Stabilize,clip,could,yes,no,heavy compute
 Keyframes for position scale rotation opacity,keyframes,must,yes,no,Play listing source 6
 Keyframe easing curves,keyframes,should,yes,no,
@@ -81,3 +81,4 @@ Account login and Me tab,account,skip,yes,skip,not needed for a personal app
 TikTok direct post,sharing,skip,yes,skip,partner integration; share sheet covers it
 Pro subscription and paywall,payments,skip,yes,skip,personal app has no paywall; never bypass the real one
 Watermark and ending clip,export,skip,yes,skip,not needed
+Build a template from any edited clip (cuts + In/Out/Combo),templates,should,no,yes,"our own addition: on-device analysis, own clips fill the slots in order, the rest become placeholders to replace"

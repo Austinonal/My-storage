@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ImagePlus, Music, Pause, Play, Redo2, Scissors, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Volume2 } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Music, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
@@ -13,6 +13,7 @@ import {
   formatTime,
   moveClip,
   projectDuration,
+  replaceClip,
   setPhotoDuration,
   setVolume,
   sourceOut,
@@ -22,11 +23,12 @@ import {
 import type { Slot } from '../anim.ts';
 import { AnimationSheet, type Still } from './AnimationSheet';
 import { Timeline } from './Timeline';
+import { TemplateSheet } from './TemplateSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project } from '../schema';
 
 const SLOT_KEY = { in: 'animIn', out: 'animOut', combo: 'animCombo' } as const;
-type Sheet = 'anim' | 'trim' | 'volume' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | null;
 
 function Message({ children }: { children: ReactNode }) {
   return (
@@ -71,6 +73,7 @@ export function Editor({ id }: { id: string }) {
   const playerRef = useRef<Player | null>(null);
   const visualInput = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setStatus('loading');
@@ -140,6 +143,20 @@ export function Editor({ id }: { id: string }) {
         });
         setSelectedId(ids[0] ?? null);
       }
+    } catch (e) {
+      setNotice(importMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replaceWith(file: File | undefined) {
+    if (!p || !visual || !file) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const asset = await importMedia(p.id, file);
+      edit((d) => replaceClip(d, visual.id, asset));
     } catch (e) {
       setNotice(importMessage(e));
     } finally {
@@ -248,10 +265,12 @@ export function Editor({ id }: { id: string }) {
           <>
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
+            <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
           </>
         )}
         {sel && (
           <>
+            {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             <ToolButton icon={Scissors} label="แยก" onClick={split} />
             <ToolButton icon={SlidersHorizontal} label={sel.kind === 'photo' ? 'ระยะเวลา' : 'ตัด'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />
             {visual && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={openAnimations} />}
@@ -265,11 +284,27 @@ export function Editor({ id }: { id: string }) {
         void addFiles([...(e.target.files ?? [])], 'visual');
         e.target.value = '';
       }} />
+      <input ref={replaceInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอมาแทนที่" onChange={(e) => {
+        void replaceWith(e.target.files?.[0]);
+        e.target.value = '';
+      }} />
       <input ref={audioInput} type="file" accept="audio/*,video/*" hidden aria-label="เลือกไฟล์เสียง หรือวิดีโอเพื่อใช้แค่เสียง" onChange={(e) => {
         void addFiles([...(e.target.files ?? [])], 'audio');
         e.target.value = '';
       }} />
 
+      {p && (
+        <TemplateSheet
+          open={sheet === 'template'}
+          onClose={() => setSheet(null)}
+          project={p}
+          onApplied={(slots, empty) => {
+            setSelectedId(null);
+            player?.seek(0);
+            setNotice(empty ? `จัดตามคลิปต้นแบบแล้ว ${slots} ช่อง · ช่องว่าง ${empty} ช่อง: แตะช่องว่างแล้วกด “แทนที่”` : `จัดตามคลิปต้นแบบแล้ว ${slots} ช่อง`);
+          }}
+        />
+      )}
       {p && visual && (
         <AnimationSheet open={sheet === 'anim'} onClose={() => setSheet(null)} clip={visual} still={still} onPlay={setPendingPlay} />
       )}

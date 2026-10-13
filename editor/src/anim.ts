@@ -661,6 +661,10 @@ const COMBO: Entry[] = [
     return { copies: [{ dx: -k, alpha: 0.35 }, { dx: k, alpha: 0.35 }, {}] };
   }],
   ['beat-zoom', 'ซูมตามบีท', 2, (p) => ({ scale: 1 + 0.15 * Math.exp(-((p * 4) % 1) / 0.12) })],
+  ['kb-in', 'ซูมช้าเข้า', 3, (p) => ({ scale: lerp(1, 1.2, p) })],
+  ['kb-out', 'ซูมช้าออก', 3, (p) => ({ scale: lerp(1.2, 1, p) })],
+  ['kb-pan-left', 'แพนซ้าย', 3, (p) => ({ scale: 1.2, x: lerp(0.08, -0.08, p) })],
+  ['kb-pan-right', 'แพนขวา', 3, (p) => ({ scale: 1.2, x: lerp(-0.08, 0.08, p) })],
   ['zoom-shake', 'ซูมสั่น', 2, (p) => {
     const n = Math.floor(p * 30);
     return { scale: 1.15, x: noise(n) * 0.02, y: noise(n + 9) * 0.02 };

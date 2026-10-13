@@ -35,6 +35,7 @@ export interface MediaAsset {
   rotation: 0 | 90 | 180 | 270;
   hasAudio: boolean;
   reversedFile?: string; // proxy built on first Reverse
+  placeholder?: boolean; // the empty-slot picture a template leaves for you to replace
 }
 
 export interface Track {

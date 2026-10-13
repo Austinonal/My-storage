@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Film, Image, Music, ZoomIn, ZoomOut } from 'lucide-react';
+import { Film, Image, Music, Plus, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration } from '../timeline.ts';
 import type { Clip, Project, Us } from '../schema';
 
@@ -10,6 +10,7 @@ const KIND = {
   photo: { label: 'รูป', icon: Image, cls: 'bg-raised' },
   audio: { label: 'เสียง', icon: Music, cls: 'bg-clip-audio' },
   text: { label: 'ข้อความ', icon: Film, cls: 'bg-clip-text' },
+  empty: { label: 'ช่องว่าง', icon: Plus, cls: 'border-dashed border-muted bg-surface text-muted' },
 } as const;
 
 // The playhead stays in the middle; scrolling the tracks under it scrubs. Tap a clip to select it, then drag it.
@@ -128,11 +129,12 @@ export function Timeline({
           {project.tracks.map((track) => (
             <div key={track.id} className={`relative mt-1 ${track.kind === 'main' ? 'h-14' : 'h-10'}`} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
               {track.clips.map((c, i) => {
-                const k = KIND[c.kind];
+                const empty = c.kind !== 'text' && !!project.assets[c.assetId]?.placeholder;
+                const k = KIND[empty ? 'empty' : c.kind];
                 const Icon = k.icon;
                 const selected = c.id === selectedId;
                 const dragging = drag?.id === c.id;
-                const name = c.kind === 'text' ? c.text : project.assets[c.assetId]?.name ?? '';
+                const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text : project.assets[c.assetId]?.name ?? '';
                 return (
                   <button
                     key={c.id}
@@ -146,7 +148,7 @@ export function Timeline({
                     onKeyDown={(e) => key(e, c)}
                     className={`absolute top-0 flex h-full items-center gap-1 overflow-hidden rounded-sm border-2 px-1 text-left text-xs ${k.cls} ${
                       selected ? 'z-10 border-playhead' : 'border-transparent'
-                    } ${dragging ? 'z-20 opacity-80 shadow-pop' : ''} focus-visible:outline-2 focus-visible:outline-accent`}
+                    } ${empty && !selected ? 'border-dashed border-muted' : ''} ${dragging ? 'z-20 opacity-80 shadow-pop' : ''} focus-visible:outline-2 focus-visible:outline-accent`}
                     style={{
                       left: (c.start / SEC) * pps + (dragging ? drag.dx : 0),
                       width: Math.max(4, (c.duration / SEC) * pps - 2),

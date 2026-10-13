@@ -154,6 +154,53 @@ export function splitAt(p: Project, clipId: string, at: Us) {
   return right.id;
 }
 
+export interface TemplateSlot {
+  seconds: number;
+  in: { presetId: string; seconds: number } | null;
+  out: { presetId: string; seconds: number } | null;
+  combo: { presetId: string; seconds: number } | null;
+}
+
+// Gives the main track the template's rhythm: your clips fill the first slots in order, empty slots get the placeholder,
+// and each slot takes the template's In / Out / Combo. Clips beyond the template stay at the end, untouched.
+export function applyTemplate(p: Project, slots: TemplateSlot[], placeholder: MediaAsset) {
+  p.assets[placeholder.id] = placeholder;
+  const own = (p.tracks[0].clips as MediaClip[]).filter((c) => !p.assets[c.assetId].placeholder);
+  const f = frameUs(p);
+  const filled = slots.map((s, i) => {
+    const c = own[i] ?? mediaClip(placeholder);
+    const want = Math.max(f, Math.round(s.seconds * SEC));
+    if (c.kind === 'video') {
+      const asset = p.assets[c.assetId];
+      if (asset.duration - c.sourceIn < want) c.sourceIn = 0;
+      c.duration = Math.max(f, Math.min(want, asset.duration - c.sourceIn));
+    } else c.duration = want;
+    const anim = (g: TemplateSlot['in']) => (g ? { presetId: g.presetId, duration: Math.max(f, Math.round(g.seconds * SEC)) } : null);
+    c.animCombo = anim(s.combo);
+    c.animIn = s.combo ? null : anim(s.in);
+    c.animOut = s.combo ? null : anim(s.out);
+    fitAnims(c);
+    return c;
+  });
+  p.tracks[0].clips = [...filled, ...own.slice(slots.length)];
+  normalize(p);
+  dropEmptyTracks(p);
+}
+
+// Swaps the picture or video in a main-track clip and keeps its place, length and animations.
+export function replaceClip(p: Project, clipId: string, asset: MediaAsset) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' && c.kind !== 'photo') throw new Error('only videos and photos can be replaced');
+  if (asset.kind === 'audio') throw new Error('replace a picture with a picture or a video');
+  p.assets[asset.id] = asset;
+  c.assetId = asset.id;
+  c.kind = asset.kind;
+  c.sourceIn = 0;
+  if (asset.kind === 'video') c.duration = Math.max(frameUs(p), Math.min(c.duration, asset.duration));
+  fitAnims(c);
+  normalize(p);
+}
+
 export function setPhotoDuration(p: Project, clipId: string, duration: Us) {
   const c = findClip(p, clipId);
   if (c.kind !== 'photo') throw new Error('only photos have a free duration');
