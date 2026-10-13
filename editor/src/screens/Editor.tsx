@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ImagePlus, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia } from '../media';
@@ -8,6 +8,7 @@ import {
   SEC,
   addAudio,
   addMedia,
+  addOverlay,
   addText,
   deleteClip,
   findClip,
@@ -21,6 +22,7 @@ import {
   setMatch,
   setPhotoDuration,
   setTextTiming,
+  setTransform,
   setVolume,
   sourceOut,
   splitAt,
@@ -37,7 +39,7 @@ import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | null;
+type Sheet = 'anim' | 'trim' | 'volume' | 'template' | 'text' | 'colour' | 'place' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -89,6 +91,7 @@ export function Editor({ id }: { id: string }) {
   const playerRef = useRef<Player | null>(null);
   const visualInput = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
+  const overlayInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -100,6 +103,7 @@ export function Editor({ id }: { id: string }) {
   const sel = selected(p, selectedId);
   const visual = sel && (sel.kind === 'video' || sel.kind === 'photo') ? sel : null;
   const textSel = sel?.kind === 'text' ? sel : null;
+  const overlaySel = visual && p && !p.tracks[0].clips.some((c) => c.id === visual.id) ? visual : null;
   const animated = visual ?? textSel;
   const pointers = useRef(new Map<number, Point>());
   const drag = useRef<{ id: string; at: Point; tr: Transform; pinch: { d: number; a: number } | null; moved: boolean; key: string } | null>(null);
@@ -134,9 +138,9 @@ export function Editor({ id }: { id: string }) {
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-    player.selectedText = textSel?.id ?? null;
+    player.selectedBox = (textSel ?? overlaySel)?.id ?? null;
     player.draw();
-  }, [textSel?.id]);
+  }, [textSel?.id, overlaySel?.id]);
 
   // Tapping an animation preset plays just that part of the clip once, after the edit has landed.
   useEffect(() => {
@@ -163,13 +167,31 @@ export function Editor({ id }: { id: string }) {
         setSelectedId(newId);
       } else {
         const main = p.tracks[0].clips;
-        const at = visual ? main.indexOf(visual) + 1 : main.length;
+        const at = visual && main.includes(visual) ? main.indexOf(visual) + 1 : main.length;
         let ids: string[] = [];
         edit((d) => {
           ids = addMedia(d, assets, at);
         });
         setSelectedId(ids[0] ?? null);
       }
+    } catch (e) {
+      setNotice(importMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addOverlayFile(file: File | undefined) {
+    if (!p || !file) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const asset = await importMedia(p.id, file);
+      let id = '';
+      edit((d) => {
+        id = addOverlay(d, asset, Math.min(time, Math.max(0, total - SEC)));
+      });
+      setSelectedId(id);
     } catch (e) {
       setNotice(importMessage(e));
     } finally {
@@ -226,6 +248,9 @@ export function Editor({ id }: { id: string }) {
     return { x: ((e.clientX - r.left) * cv.width) / r.width, y: ((e.clientY - r.top) * cv.height) / r.height };
   }
 
+  // Text and overlays move the same way on the preview; only the command that stores the move differs.
+  const moveBox = (d: Project, id: string, patch: Partial<Transform>) => (findClip(d, id).kind === 'text' ? updateText(d, id, { transform: patch }) : setTransform(d, id, patch));
+
   function hitText({ x, y }: Point) {
     const boxes = playerRef.current?.textBoxes ?? [];
     for (let i = boxes.length - 1; i >= 0; i--) {
@@ -240,7 +265,7 @@ export function Editor({ id }: { id: string }) {
 
   // Preview gestures on text: tap selects, one finger moves, two fingers scale and turn.
   function startGesture(id: string, at: Point, pinch: { d: number; a: number } | null) {
-    const c = findClip(p!, id) as TextClip;
+    const c = findClip(p!, id) as TextClip | MediaClip;
     drag.current = { id, at, tr: c.transform, pinch, moved: drag.current?.moved ?? false, key: drag.current?.key ?? `text-move-${Date.now()}` };
   }
 
@@ -259,7 +284,7 @@ export function Editor({ id }: { id: string }) {
         startGesture(id, pt, null);
       }
     } else if (pointers.current.size === 2) {
-      const id = drag.current?.id ?? textSel?.id;
+      const id = drag.current?.id ?? textSel?.id ?? overlaySel?.id;
       const [a, b] = [...pointers.current.values()];
       if (id) startGesture(id, pt, pinchOf(a, b));
     }
@@ -276,7 +301,7 @@ export function Editor({ id }: { id: string }) {
       const [a, b] = [...pointers.current.values()];
       const now = pinchOf(a, b);
       g.moved = true;
-      edit((d) => updateText(d, g.id, { transform: { scale: (g.tr.scale * now.d) / Math.max(1, g.pinch!.d), rotation: wrapDeg(g.tr.rotation + now.a - g.pinch!.a) } }), g.key);
+      edit((d) => moveBox(d, g.id, { scale: (g.tr.scale * now.d) / Math.max(1, g.pinch!.d), rotation: wrapDeg(g.tr.rotation + now.a - g.pinch!.a) }), g.key);
     } else if (!g.pinch) {
       const dx = pt.x - g.at.x;
       const dy = pt.y - g.at.y;
@@ -284,7 +309,7 @@ export function Editor({ id }: { id: string }) {
       g.moved = true;
       let x = g.tr.x + dx / cv.width;
       if (Math.abs(x - 0.5) < 0.015) x = 0.5; // snap to the centre line
-      edit((d) => updateText(d, g.id, { transform: { x, y: clamp01(g.tr.y + dy / cv.height) } }), g.key);
+      edit((d) => moveBox(d, g.id, { x, y: clamp01(g.tr.y + dy / cv.height) }), g.key);
     }
   }
 
@@ -292,7 +317,7 @@ export function Editor({ id }: { id: string }) {
     if (!pointers.current.delete(e.pointerId)) return;
     const g = drag.current;
     if (pointers.current.size === 0) {
-      if (!g && textSel) setSelectedId(null); // a tap beside the text lets go of it
+      if (!g && (textSel || overlaySel)) setSelectedId(null); // a tap beside the text or overlay lets go of it
       drag.current = null;
     } else if (g) {
       startGesture(g.id, [...pointers.current.values()][0], null); // one finger left: keep moving from here
@@ -417,6 +442,7 @@ export function Editor({ id }: { id: string }) {
             <ToolButton icon={ImagePlus} label="เพิ่มคลิป" disabled={!p || busy} onClick={() => visualInput.current?.click()} />
             <ToolButton icon={Music} label="เพิ่มเสียง" disabled={!p || busy} onClick={() => audioInput.current?.click()} />
             <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(Math.min(time, Math.max(0, total - SEC)))} />
+            <ToolButton icon={Layers} label="ภาพซ้อน" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
             <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
           </>
         )}
@@ -424,6 +450,7 @@ export function Editor({ id }: { id: string }) {
           <>
             {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
+            {overlaySel && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
             <ToolButton icon={Scissors} label="แยก" onClick={split} />
             <ToolButton icon={SlidersHorizontal} label={sel.kind === 'video' || sel.kind === 'audio' ? 'ตัด' : 'ระยะเวลา'} active={sheet === 'trim'} onClick={() => setSheet('trim')} />
             {animated && <ToolButton icon={Sparkles} label="แอนิเมชัน" active={sheet === 'anim'} onClick={() => {
@@ -444,6 +471,10 @@ export function Editor({ id }: { id: string }) {
       }} />
       <input ref={replaceInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอมาแทนที่" onChange={(e) => {
         void replaceWith(e.target.files?.[0]);
+        e.target.value = '';
+      }} />
+      <input ref={overlayInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอสำหรับภาพซ้อน" onChange={(e) => {
+        void addOverlayFile(e.target.files?.[0]);
         e.target.value = '';
       }} />
       <input ref={audioInput} type="file" accept="audio/*,video/*" hidden aria-label="เลือกไฟล์เสียง หรือวิดีโอเพื่อใช้แค่เสียง" onChange={(e) => {
@@ -468,6 +499,20 @@ export function Editor({ id }: { id: string }) {
       )}
       {p && visual && (
         <ColourSheet open={sheet === 'colour'} tab={colourTab} onTab={setColourTab} onClose={() => setSheet(null)} clip={visual} asset={p.assets[visual.assetId]} still={still} onApplyAll={() => colourToAll(visual)} />
+      )}
+      {p && overlaySel && (
+        <BottomSheet open={sheet === 'place'} title="จัดวางภาพซ้อน" onClose={() => setSheet(null)} modal={false}>
+          <div className="flex flex-col gap-2">
+            <Slider label="ขนาด" value={Math.round(overlaySel.transform.scale * 100)} min={5} max={300} step={1} format={(v) => `${v}%`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { scale: v / 100 }), 'overlay-scale')} />
+            <Slider label="หมุน" value={Math.round(overlaySel.transform.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { rotation: v }), 'overlay-rotate')} />
+            <Slider label="ความทึบ" value={Math.round(overlaySel.transform.opacity * 100)} min={0} max={100} step={5} format={(v) => `${v}%`} onChange={(v) => edit((d) => setTransform(d, overlaySel.id, { opacity: v / 100 }), 'overlay-opacity')} />
+            <div className="flex gap-2">
+              <Button variant="secondary" size="md" onClick={() => edit((d) => setTransform(d, overlaySel.id, { x: 0.5, y: 0.5 }))}>กลางจอ</Button>
+              <Button variant="secondary" size="md" onClick={() => edit((d) => setTransform(d, overlaySel.id, { x: 0.5, y: 0.5, scale: 1, rotation: 0 }))}>เต็มจอ</Button>
+            </div>
+            <p className="text-xs text-muted">บนจอตัวอย่าง: ลากเพื่อย้าย ใช้สองนิ้วเพื่อย่อ/ขยายและหมุน</p>
+          </div>
+        </BottomSheet>
       )}
       {p && textSel && (
         <TextSheet open={sheet === 'text'} onClose={() => setSheet(null)} clip={textSel} onNext={() => newText(textSel.start + textSel.duration, textSel)} />

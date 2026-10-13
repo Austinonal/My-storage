@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -283,4 +283,35 @@ test('snapping picks the nearest point within reach', () => {
   assert.equal(snap(1.2 * SEC, pts, 0.1 * SEC), 1.234 * SEC);
   assert.equal(snap(2 * SEC, pts, 0.1 * SEC), null);
   assert.ok(pts.includes(projectDuration(p)));
+});
+
+test('overlays: own track under the text, free in time, never overlapping, transform clamps', () => {
+  const p = make();
+  const total = projectDuration(p);
+  addText(p, 0);
+  const a = addOverlay(p, photo, 1 * SEC);
+  const b = addOverlay(p, photo, 2 * SEC); // overlaps a (3 s photo) -> second overlay track
+  const kinds = p.tracks.map((t) => t.kind);
+  assert.deepEqual(kinds, ['main', 'overlay', 'overlay', 'text'], 'overlays above main, below text');
+  assert.equal(projectDuration(p), total, 'overlays do not change the length');
+  assert.equal((findClip(p, a) as MediaClip).transform.scale, 0.5);
+  setTransform(p, a, { x: 9, scale: 99, opacity: -1 });
+  const t = (findClip(p, a) as MediaClip).transform;
+  assert.deepEqual([t.x, t.scale, t.opacity], [1.5, 8, 0]);
+  moveClip(p, a, { start: 2 * SEC }); // a and b on separate tracks; a stays on its own
+  setPhotoDuration(p, b, 1 * SEC);
+  moveClip(p, b, { start: 6 * SEC });
+  moveClip(p, b, { start: 0 }); // b's own track is free there
+  const lanes = () => p.tracks.filter((x) => x.kind === 'overlay').map((x) => x.clips.map((c) => c.id));
+  assert.deepEqual(lanes(), [[a], [b]]);
+  setPhotoDuration(p, b, 2 * SEC);
+  moveClip(p, b, { start: 4 * SEC });
+  setPhotoDuration(p, a, 3 * SEC); // a: 2-5 s and b: 4-6 s are on different tracks, nothing to do
+  assertValid(p);
+  moveClip(p, a, { start: 10 * SEC });
+  setPhotoDuration(p, b, 9 * SEC); // b now runs into a's old time only; still valid
+  assertValid(p);
+  const right = splitAt(p, a, 11 * SEC);
+  assert.ok(right && findClip(p, right).start === 11 * SEC);
+  assertValid(p);
 });

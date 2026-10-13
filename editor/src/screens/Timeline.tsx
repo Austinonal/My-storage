@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { Film, Image, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { Film, Image, Layers, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration, snap, snapPoints, sourceOut } from '../timeline.ts';
 import { PEAK_RATE, THUMB_H, peaksOf, stripOf } from '../thumbs';
 import type { AudioClip, Clip, MediaAsset, MediaClip, Project, Us } from '../schema';
@@ -74,6 +74,7 @@ const KIND = {
   photo: { label: 'รูป', icon: Image, cls: 'bg-raised' },
   audio: { label: 'เสียง', icon: Music, cls: 'bg-clip-audio' },
   text: { label: 'ข้อความ', icon: Type, cls: 'bg-clip-text' },
+  overlay: { label: 'ภาพซ้อน', icon: Layers, cls: 'bg-raised' },
   empty: { label: 'ช่องว่าง', icon: Plus, cls: 'border-dashed border-muted bg-surface text-muted' },
 } as const;
 
@@ -276,7 +277,7 @@ export function Timeline({
             <div key={track.id} className={`relative mt-1 ${track.kind === 'main' ? 'h-14' : 'h-10'}`} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
               {track.clips.map((c, i) => {
                 const empty = c.kind !== 'text' && !!project.assets[c.assetId]?.placeholder;
-                const k = KIND[empty ? 'empty' : c.kind];
+                const k = KIND[empty ? 'empty' : track.kind === 'overlay' ? 'overlay' : c.kind];
                 const Icon = k.icon;
                 const selected = c.id === selectedId;
                 const dragging = drag?.id === c.id;
@@ -300,7 +301,7 @@ export function Timeline({
                     } ${empty && !selected ? 'border-dashed border-muted' : ''} ${dragging ? 'z-20 opacity-80 shadow-pop' : ''} focus-visible:outline-2 focus-visible:outline-accent`}
                     style={{ left, width, touchAction: selected ? 'none' : 'pan-x pan-y' }}
                   >
-                    {asset && c.kind !== 'audio' && <Filmstrip asset={asset} clip={c as MediaClip} pps={pps} h={52} />}
+                    {asset && c.kind !== 'audio' && <Filmstrip asset={asset} clip={c as MediaClip} pps={pps} h={track.kind === 'main' ? 52 : 36} />}
                     {asset && c.kind === 'audio' && <Waveform asset={asset} clip={c} pps={pps} />}
                     <Icon size={14} aria-hidden className={`relative shrink-0 ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60' : ''}`} />
                     <span className={`relative min-w-0 truncate ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60 px-0.5' : ''}`}>{name}</span>

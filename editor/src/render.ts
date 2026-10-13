@@ -140,6 +140,7 @@ export function drawClip(ctx: Ctx, img: CanvasImageSource, srcW: number, srcH: n
   ctx.restore();
 }
 
+// Where a text or overlay was drawn, in canvas pixels, for tapping and dragging on the preview.
 export interface TextBox {
   id: string;
   cx: number;
@@ -159,9 +160,31 @@ function drawText(ctx: Ctx, W: number, H: number, c: TextClip, t: Us): TextBox {
   return { id: c.id, ...box, rot: tr.rotation };
 }
 
-// One frame at timeline time `t`: the main-track clip (`img` is null while its frame is still decoding), then text on top.
-// Returns where each visible text was drawn, for tapping and dragging on the preview.
-export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, clip: MediaClip | undefined, img: CanvasImageSource | null): TextBox[] {
+function drawOverlay(ctx: Ctx, W: number, H: number, p: Project, c: MediaClip, img: CanvasImageSource, t: Us): TextBox {
+  const a = p.assets[c.assetId];
+  const tr = c.transform;
+  const fit = fitContain(a.width, a.height, W, H);
+  const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
+  const k = Math.min(1, Math.max(box.w, box.h) / Math.max(a.width, a.height));
+  const pose = poseAt(c, t);
+  drawClip(ctx, graded(img, a.width * k, a.height * k, c), a.width, a.height, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
+  return { id: c.id, ...box, rot: tr.rotation };
+}
+
+export const overlayClips = (p: Project) => p.tracks.filter((tr) => tr.kind === 'overlay' && !tr.hidden).flatMap((tr) => tr.clips as MediaClip[]);
+
+// One frame at timeline time `t`: the main-track clip (`img` is null while its frame is still decoding), then overlays
+// (their frames in `overlays`, by clip id), then text on top. Returns where each overlay and text was drawn.
+export function renderFrame(
+  ctx: Ctx,
+  W: number,
+  H: number,
+  p: Project,
+  t: Us,
+  clip: MediaClip | undefined,
+  img: CanvasImageSource | null,
+  overlays: Map<string, CanvasImageSource | null> = new Map(),
+): TextBox[] {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.filter = 'none';
@@ -174,6 +197,10 @@ export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, c
     drawClip(ctx, graded(img, a.width * k, a.height * k, clip), a.width, a.height, W, H, poseAt(clip, Math.min(clip.duration, Math.max(0, t - clip.start))));
   }
   const boxes: TextBox[] = [];
+  for (const c of overlayClips(p)) {
+    const frame = overlays.get(c.id);
+    if (frame && t >= c.start && t < c.start + c.duration) boxes.push(drawOverlay(ctx, W, H, p, c, frame, t - c.start));
+  }
   for (const track of p.tracks) {
     if (track.kind !== 'text' || track.hidden) continue;
     for (const c of track.clips) if (c.kind === 'text' && t >= c.start && t < c.start + c.duration) boxes.push(drawText(ctx, W, H, c, t - c.start));

@@ -13,11 +13,12 @@ import {
   getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
   type VideoCodec,
+  type WrappedCanvas,
 } from 'mediabunny';
 import type { AudioClip, ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
-import { renderFrame } from './render';
+import { overlayClips, renderFrame } from './render';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 
@@ -140,6 +141,7 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
     }
     const frames = Math.max(1, Math.round((total / SEC) * s.fps));
     const frameTime = (i: number) => Math.round((i * SEC) / s.fps);
+    const overlays = overlayFeeder(p, width, height, frames, frameTime);
     let i = 0;
     for (const clip of clips) {
       const asset = p.assets[clip.assetId];
@@ -153,7 +155,7 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
         try {
           for (let n = i - timestamps.length; n < i; ) {
             signal.throwIfAborted();
-            renderFrame(ctx, width, height, p, frameTime(n), clip, bitmap);
+            renderFrame(ctx, width, height, p, frameTime(n), clip, bitmap, await overlays.at(n));
             await video.add(n / s.fps, 1 / s.fps);
             onProgress(++n / frames);
           }
@@ -168,7 +170,7 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
         let n = i - timestamps.length;
         for await (const frame of sink.canvasesAtTimestamps(timestamps)) {
           signal.throwIfAborted();
-          renderFrame(ctx, width, height, p, frameTime(n), clip, frame?.canvas ?? null);
+          renderFrame(ctx, width, height, p, frameTime(n), clip, frame?.canvas ?? null, await overlays.at(n));
           await video.add(n / s.fps, 1 / s.fps);
           onProgress(++n / frames);
         }
@@ -176,12 +178,64 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
         input.dispose();
       }
     }
+    overlays.dispose();
     await output.finalize();
   } catch (e) {
     if (output.state !== 'finalized') await output.cancel();
     await deleteExport(p.id);
     throw e;
   }
+}
+
+// Frames for every overlay, pulled in step with the main track: each overlay video gets its own decoder,
+// opened when the overlay first appears and closed after its last frame.
+function overlayFeeder(p: Project, width: number, height: number, frames: number, frameTime: (n: number) => number) {
+  type Feed = { c: MediaClip; first: number; last: number; bmp?: ImageBitmap; input?: ReturnType<typeof openInput>; it?: AsyncIterator<WrappedCanvas | null> };
+  const feeds: Feed[] = [];
+  for (const c of overlayClips(p)) {
+    let first = -1;
+    let last = -1;
+    for (let n = 0; n < frames; n++) {
+      const t = frameTime(n);
+      if (t < c.start || t >= c.start + c.duration) continue;
+      if (first < 0) first = n;
+      last = n;
+    }
+    if (first >= 0) feeds.push({ c, first, last });
+  }
+  const close = (f: Feed) => {
+    f.bmp?.close();
+    f.input?.dispose();
+    f.bmp = f.input = f.it = undefined;
+  };
+  return {
+    async at(n: number) {
+      const out = new Map<string, CanvasImageSource | null>();
+      for (const f of feeds) if (n > f.last) close(f); // finished overlays let go of their decoder (after their last frame was drawn)
+      for (const f of feeds) {
+        if (n < f.first || n > f.last) continue;
+        const { c } = f;
+        const asset = p.assets[c.assetId];
+        if (c.kind === 'photo') {
+          f.bmp ??= await createImageBitmap(await openMedia(asset.file));
+          out.set(c.id, f.bmp);
+        } else {
+          if (!f.it) {
+            const s = Math.min(2, Math.max(0.1, c.transform.scale));
+            const box = fitContain(asset.width, asset.height, width * s, height * s);
+            f.input = openInput(await openMedia(asset.file));
+            const sink = new CanvasSink((await f.input.getPrimaryVideoTrack())!, { width: Math.min(asset.width, box.w), height: Math.min(asset.height, box.h), fit: 'fill', poolSize: 2 });
+            const ts = Array.from({ length: f.last - f.first + 1 }, (_, k) => (c.sourceIn + (frameTime(f.first + k) - c.start) * c.speed) / SEC + FRAME_NUDGE);
+            f.it = sink.canvasesAtTimestamps(ts)[Symbol.asyncIterator]();
+          }
+          const r = await f.it.next();
+          out.set(c.id, r.done ? null : (r.value?.canvas ?? null));
+        }
+      }
+      return out;
+    },
+    dispose: () => feeds.forEach(close),
+  };
 }
 
 // shortcut: renders the whole mix in memory (about 23 MB per stereo minute); render in chunks once exports run past a few minutes.

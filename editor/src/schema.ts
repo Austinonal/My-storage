@@ -40,7 +40,7 @@ export interface MediaAsset {
 
 export interface Track {
   id: Id;
-  kind: 'main' | 'audio' | 'text';
+  kind: 'main' | 'overlay' | 'audio' | 'text'; // overlay: pictures and videos on top of the main track (picture in picture)
   muted: boolean;
   hidden: boolean;
   clips: Clip[]; // sorted by start, never overlapping

@@ -1,6 +1,6 @@
 import type { AudioClip, MediaClip, Project, Us } from './schema';
 import { openMedia } from './media';
-import { renderFrame, type TextBox } from './render';
+import { overlayClips, renderFrame, type TextBox } from './render';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
@@ -13,12 +13,13 @@ export class Player {
   playing = false;
   onTick?: (t: Us, playing: boolean) => void;
   onError?: (e: unknown) => void;
-  textBoxes: TextBox[] = []; // where text was drawn last, in canvas pixels
-  selectedText: string | null = null; // framed in the preview only, never in the export
+  textBoxes: TextBox[] = []; // where text and overlays were drawn last, in canvas pixels
+  selectedBox: string | null = null; // framed in the preview only, never in the export
 
   private p: Project | null = null;
   private sources = new Map<string, Source>(); // main-track media, by asset id
   private audios = new Map<string, HTMLAudioElement>(); // audio-track clips, by clip id
+  private overlayVideos = new Map<string, HTMLVideoElement>(); // overlay video clips, by clip id
   private urls = new Map<string, string>();
   private loading = new Set<string>();
   private raf = 0;
@@ -32,10 +33,12 @@ export class Player {
   setProject(p: Project) {
     this.p = p;
     const ids = new Set(p.tracks.flatMap((t) => t.clips.map((c) => c.id)));
-    for (const [id, el] of this.audios) {
-      if (ids.has(id)) continue;
-      el.pause();
-      this.audios.delete(id);
+    for (const map of [this.audios, this.overlayVideos]) {
+      for (const [id, el] of map) {
+        if (ids.has(id)) continue;
+        el.pause();
+        map.delete(id);
+      }
     }
     this.time = Math.min(this.time, projectDuration(p));
     void prepareLuts(p).then(() => this.draw());
@@ -55,6 +58,22 @@ export class Player {
 
   private async load(p: Project) {
     const jobs: [string, () => Promise<void>][] = [];
+    const photo = async (assetId: string) => {
+      if (!this.sources.has(assetId)) this.sources.set(assetId, { kind: 'photo', img: await createImageBitmap(await openMedia(p.assets[assetId].file)) });
+    };
+    for (const c of overlayClips(p)) {
+      jobs.push([c.kind === 'photo' ? c.assetId : c.id, async () => {
+        if (c.kind === 'photo') return photo(c.assetId);
+        if (this.overlayVideos.has(c.id)) return;
+        const el = document.createElement('video');
+        el.preload = 'auto';
+        el.playsInline = true;
+        el.addEventListener('seeked', () => this.draw());
+        el.addEventListener('loadeddata', () => this.draw());
+        el.src = await this.url(c.assetId);
+        this.overlayVideos.set(c.id, el);
+      }]);
+    }
     for (const c of p.tracks[0].clips as MediaClip[]) {
       const asset = p.assets[c.assetId];
       jobs.push([c.assetId, async () => {
@@ -131,14 +150,16 @@ export class Player {
     }
     for (const track of p.tracks.slice(1)) {
       for (const c of track.clips) {
-        const el = this.audios.get(c.id);
-        if (el && c.kind === 'audio') this.follow(el, t >= c.start && t < c.start + c.duration ? c : null, track.muted);
+        const el = c.kind === 'audio' ? this.audios.get(c.id) : c.kind === 'video' ? this.overlayVideos.get(c.id) : undefined;
+        if (el && c.kind !== 'text' && c.kind !== 'photo') this.follow(el, t >= c.start && t < c.start + c.duration ? c : null, track.muted);
       }
     }
   }
 
   // The frame source for a main-track clip, for thumbnails and stills.
   sourceOf(c: MediaClip): CanvasImageSource | null {
+    const own = this.overlayVideos.get(c.id);
+    if (own) return own.readyState >= 2 ? own : null;
     const s = this.sources.get(c.assetId);
     if (!s) return null;
     return s.kind === 'photo' ? s.img : s.el.readyState >= 2 ? s.el : null;
@@ -151,8 +172,10 @@ export class Player {
     const img = clip ? this.sourceOf(clip) : null;
     if (!img && this.playing) return; // keep the last frame while the next clip seeks
     const ctx = this.canvas.getContext('2d')!;
-    this.textBoxes = renderFrame(ctx, this.canvas.width, this.canvas.height, p, this.time, clip, img);
-    const b = this.textBoxes.find((x) => x.id === this.selectedText);
+    const overlays = new Map<string, CanvasImageSource | null>();
+    for (const c of overlayClips(p)) if (this.time >= c.start && this.time < c.start + c.duration) overlays.set(c.id, this.sourceOf(c));
+    this.textBoxes = renderFrame(ctx, this.canvas.width, this.canvas.height, p, this.time, clip, img, overlays);
+    const b = this.textBoxes.find((x) => x.id === this.selectedBox);
     if (!b) return;
     const px = devicePixelRatio;
     ctx.save();
@@ -225,7 +248,7 @@ export class Player {
       if (s.kind === 'video') s.el.pause();
       else s.img.close();
     }
-    for (const el of this.audios.values()) el.pause();
+    for (const el of [...this.audios.values(), ...this.overlayVideos.values()]) el.pause();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
   }
 }

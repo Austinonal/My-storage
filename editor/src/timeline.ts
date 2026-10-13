@@ -63,15 +63,39 @@ export function addMedia(p: Project, assets: MediaAsset[], index = p.tracks[0].c
 }
 
 // Puts a clip on the first track of its kind where it does not overlap anything, or on a new track.
-function place(p: Project, c: AudioClip | TextClip) {
+// Pictures and videos off the main track are overlays.
+function place(p: Project, c: AudioClip | TextClip | MediaClip) {
+  const kind = c.kind === 'audio' || c.kind === 'text' ? c.kind : 'overlay';
   const fits = (clips: Clip[]) => clips.every((o) => o.id === c.id || o.start + o.duration <= c.start || c.start + c.duration <= o.start);
-  let track = p.tracks.find((t) => t.kind === c.kind && fits(t.clips));
+  let track = p.tracks.find((t) => t.kind === kind && fits(t.clips));
   if (!track) {
-    track = { id: crypto.randomUUID(), kind: c.kind, muted: false, hidden: false, clips: [] };
-    p.tracks.push(track);
+    track = { id: crypto.randomUUID(), kind, muted: false, hidden: false, clips: [] };
+    // Overlays sit right above the main track and below text, so text stays readable on top.
+    const firstText = p.tracks.findIndex((t) => t.kind === 'text');
+    if (kind === 'overlay' && firstText > 0) p.tracks.splice(firstText, 0, track);
+    else p.tracks.push(track);
   }
   track.clips.push(c);
   normalize(p);
+}
+
+// A picture or video on top of the main track, half the frame's size, centred, at the playhead.
+export function addOverlay(p: Project, asset: MediaAsset, at: Us) {
+  if (asset.kind === 'audio') throw new Error('overlays are pictures or videos');
+  p.assets[asset.id] = asset;
+  const c = mediaClip(asset);
+  c.start = Math.max(0, Math.round(at));
+  c.transform = { ...c.transform, scale: 0.5 };
+  place(p, c);
+  return c.id;
+}
+
+// Where an overlay sits: centre (frame fractions), size (1 = fits the frame), turn and opacity.
+export function setTransform(p: Project, clipId: string, patch: Partial<Transform>) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' && c.kind !== 'photo') throw new Error('not a picture or video');
+  const t = { ...c.transform, ...patch };
+  c.transform = { x: clamp(t.x, -0.5, 1.5), y: clamp(t.y, -0.5, 1.5), scale: clamp(t.scale, 0.05, 8), rotation: t.rotation, opacity: clamp(t.opacity, 0, 1) };
 }
 
 export function addAudio(p: Project, asset: MediaAsset, at: Us) {
@@ -112,7 +136,7 @@ export function moveClip(p: Project, clipId: string, to: { index: number } | { s
     if (ownTrackFree) {
       track.clips.push(c);
       normalize(p);
-    } else place(p, c as AudioClip | TextClip);
+    } else place(p, c as AudioClip | TextClip | MediaClip);
   }
   dropEmptyTracks(p);
 }
@@ -212,6 +236,7 @@ export function setPhotoDuration(p: Project, clipId: string, duration: Us) {
   c.duration = Math.round(clamp(duration, frameUs(p), 120 * SEC));
   fitAnims(c);
   normalize(p);
+  if (trackOf(p, clipId).kind !== 'main') moveClip(p, clipId, { start: c.start }); // a longer overlay may now overlap the next one
 }
 
 function visualClip(p: Project, clipId: string) {
