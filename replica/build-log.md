@@ -2,6 +2,26 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — text, colour, a friendlier timeline, sharper templates, gallery save, worker export (parity 50.9, must-haves 22 of 34)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| S09 Text | done | text templates, custom font import, auto captions | Thai has no spaces: lines wrap on the browser's Thai word dictionary and never inside a letter cluster |
+| S17 Filters | done | a filter layer on the timeline | none |
+| S18 Adjust | done | keyframes on adjust | none |
+| S03 Timeline | done | overlay track, keyframes | audio snapped to the end of the video rather than the playhead when that edge was closer; that is the right call, the test was wrong |
+| S24 Animations | done | art/particle presets | a shape reveal must cover the whole frame before it switches off; cover factors measured per shape and unit-tested |
+| S27 Export | done | true background export with the app closed (Android pauses a WebView); unverified on a phone | fonts, LUTs and WebGL all had to work inside a worker |
+| Template sheet | better | real overlapping cross-dissolves (read back as fade out + fade in) | rotation estimates had to reject slides and mixed frames |
+
+- **Text**: the "ข้อความ" tool adds text at the playhead (copying the look of the previous one, so subtitles stay consistent); "ซับถัดไป" adds the next subtitle right after. 7 bundled Thai fonts (OFL), 12 looks, colour + opacity, stroke, shadow, background, size, alignment, top/middle/bottom, rotation, zoom. On the preview: tap to select, drag to move (snaps to the centre line), two fingers to scale and turn. Per-letter animations redraw the text every frame; static text is cached.
+- **Colour**: one WebGL2 pass per frame (adjust, then the filter's 33³ LUT mixed by intensity), used by the preview and the export. 24 built-in looks are generated from small colour functions (no image assets); your own `.cube` files import into a library kept on the device.
+- **Timeline**: filmstrips (one frame per second of source, cached per asset) and audio waveforms; edge handles on the selected clip trim videos and audio (source range), photos and text (length); audio and text trimmed at the left keep the rest in place; edges and dragged clips snap to the playhead, the video's ends and other clips' edges with a guide line; pinch or ctrl+wheel zooms.
+- **Template**: turns are read from an angular profile around the centre (spin, pendulum, slow tilt and card spin); cross-dissolves are found as runs of frames that are a growing mix of two different pictures, and split in their middle.
+- **Export**: the soundtrack is mixed on the main thread (workers have no OfflineAudioContext) and handed to a worker that renders, encodes and writes the MP4; if the worker cannot start, the export runs on the main thread. The screen stays on during export. 1080p 60 fps exported and probed. In the APK, "บันทึกลงเครื่อง" copies the video into the gallery album Movies/Editor (Documents if the gallery refuses), and "แชร์" opens the Android share sheet.
+- Checked: 39 unit tests; eight e2e suites in Chromium (slice, animations, timeline, timeline 2, template with two ffmpeg references, text, colour, 1080p60 export) with zero errors; text, colour and audio verified in the exported files; the page kept 60 fps while the worker exported.
+- Not verified: anything on a real phone (gallery save, share sheet, WebGL and fonts inside the worker on the Android WebView, export speed, H.264/AAC).
+
 ## 2026-10-13 — template from any edited clip (our own addition)
 
 | ID | status | missing | harder than expected |

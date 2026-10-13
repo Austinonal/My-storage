@@ -3,14 +3,14 @@ New project from gallery clips and photos,project,must,yes,yes,"pick several vid
 Drafts list with auto-save and reopen,project,must,yes,partial,"list, autosave (500 ms + flush on hide) and reopen work; no cover thumbnail yet"
 Rename duplicate delete a draft,project,should,yes,no,long-press on draft card (guess)
 Missing source media warning on reopen,project,should,unknown,partial,editor shows a message; the drafts list does not flag it yet
-Multi-track timeline with pinch zoom and scrub,timeline,must,yes,partial,"main + audio tracks, scroll to scrub, zoom buttons; no pinch gesture yet"
+Multi-track timeline with pinch zoom and scrub,timeline,must,yes,yes,"main + audio + text tracks, scroll to scrub, pinch / ctrl+wheel / buttons zoom, filmstrip pictures on clips"
 Play pause and timecode on preview,timeline,must,yes,yes,stops at the trim out point
-Trim clip by dragging edges,timeline,must,yes,partial,trim sheet with in/out sliders; no edge handles on the timeline yet
+Trim clip by dragging edges,timeline,must,yes,yes,"edge handles on the selected clip (video, photo, audio, text) plus the trim sheet; one undo step per drag"
 Split clip at playhead,timeline,must,yes,yes,"video, photo and audio clips"
 Delete clip,timeline,must,yes,yes,the main track keeps at least one clip
 Reorder clips by drag,timeline,must,yes,yes,"select, then drag; or arrow keys"
 Undo and redo,timeline,must,yes,yes,"snapshot undo, a slider drag is one step"
-Snap to playhead and clip edges,timeline,should,yes,no,guess
+Snap to playhead and clip edges,timeline,should,yes,yes,"edges and moved clips stick within 10 px to the playhead, the video ends and other clips, with a guide line"
 Replace clip media keeping edits,clip,should,yes,yes,"keeps place, length and animations; fills template slots"
 Speed normal 0.1x to 100x,clip,must,yes,no,Play listing
 Speed curve presets and custom curve,clip,should,yes,no,Play listing
@@ -27,13 +27,13 @@ Keyframes on filter adjust volume mask,keyframes,could,unknown,no,guess
 Transitions between clips with duration,transitions,must,yes,no,S06
 Transition categories basic camera slide blur glitch light split distortion mask MG,transitions,should,yes,no,categories from source 5; our own presets
 Apply one transition to all cuts,transitions,could,unknown,no,not confirmed
-Add text layer with font size colour,text,must,yes,no,S09
-Text stroke shadow background,text,should,unknown,no,not confirmed but common
-Text In animations,text,must,yes,no,F05 our own presets
-Text Out animations,text,must,yes,no,F05 our own presets
-Text Loop animations,text,must,yes,no,third tab called Combo in older builds
-Animation duration slider separate from layer length,text,must,yes,no,source 24
-Thai and emoji text shaping,text,must,unknown,no,user is Thai
+Add text layer with font size colour,text,must,yes,yes,"7 bundled Thai fonts (OFL), size, 12 colours + picker, opacity; drag / pinch / rotate on the preview"
+Text stroke shadow background,text,should,unknown,yes,"stroke, shadow, rounded background; 12 ready-made looks"
+Text In animations,text,must,yes,yes,"146: 20 per-letter (typewriter, pop, drop, scatter...) + every clip In"
+Text Out animations,text,must,yes,yes,132: 20 per-letter + every clip Out
+Text Loop animations,text,must,yes,yes,"146: 15 per-letter loops (wave, jump, rainbow...) + every clip Combo"
+Animation duration slider separate from layer length,text,must,yes,yes,same sheet and rules as clip animations
+Thai and emoji text shaping,text,must,unknown,partial,"Thai wraps on word boundaries (browser dictionary) and never splits a letter cluster; emoji draw with the system font, untested on a phone"
 Text templates,text,should,yes,no,our own templates only
 Import custom font file,text,should,yes,no,Play listing custom fonts
 Auto captions from speech,text,should,yes,no,on-device speech model; v2
@@ -46,16 +46,16 @@ Record voiceover,audio,must,yes,no,F08
 Audio volume,audio,must,yes,yes,0-200 %
 Audio fade in and fade out,audio,must,yes,no,
 Audio split trim delete,audio,must,yes,yes,
-Waveform on audio clips,audio,should,yes,no,
+Waveform on audio clips,audio,should,yes,yes,"loudness curve per audio clip, follows trims and volume"
 Voice effects (pitch robot chipmunk etc),audio,should,yes,no,source 12
 Noise reduction,audio,should,yes,no,
 Beat markers manual and auto,audio,could,yes,no,
 Audio speed with pitch preserved,audio,should,unknown,no,
-Filters with intensity,colour,must,yes,no,S17 our own LUTs
-Adjust brightness contrast saturation exposure,colour,must,yes,no,S18
-Adjust sharpen highlights shadows temperature tint,colour,should,yes,no,S18
+Filters with intensity,colour,must,yes,yes,24 of our own 3D LUT looks + import your .cube files; intensity 0-100 %
+Adjust brightness contrast saturation exposure,colour,must,yes,yes,WebGL2 pass shared by preview and export
+Adjust sharpen highlights shadows temperature tint,colour,should,yes,yes,same pass
 HSL and curves,colour,could,yes,no,
-Apply filter or adjust to all clips or as a timeline layer,colour,should,yes,no,
+Apply filter or adjust to all clips or as a timeline layer,colour,should,yes,partial,"""apply to all clips"" button; no filter layer on the timeline"
 Video effects (glitch blur VHS light leak shake zoom),effects,should,yes,no,our own shaders; v2
 Body effects that follow a person,effects,could,yes,no,needs segmentation model
 Overlay picture-in-picture,overlay,should,yes,no,v2
@@ -68,10 +68,10 @@ Canvas colour and blur background,canvas,must,yes,no,S20
 Canvas image background,canvas,could,yes,no,
 Export 720p and 1080p,export,must,yes,yes,H.264 preferred; test Chromium fell back to VP9/Opus - confirm H.264/AAC on the phone
 Export 2K and 4K,export,should,yes,no,phone-dependent
-Export frame rate 24 25 30 50 60,export,must,yes,yes,only 30 fps exercised in tests
+Export frame rate 24 25 30 50 60,export,must,yes,yes,"1080p 60 fps exported and probed (1080x1920, 60/1)"
 Export bitrate low medium high,export,should,yes,no,
-Export progress cancel and save to gallery,export,must,yes,partial,progress + cancel + download on web; gallery save needs the APK
-Share sheet after export,export,should,yes,partial,Web Share with files where the browser supports it; not verified on a phone
+Export progress cancel and save to gallery,export,must,yes,yes,export runs in a worker; APK saves to the gallery album Movies/Editor (falls back to Documents); not yet confirmed on a phone
+Share sheet after export,export,should,yes,yes,APK: Android share sheet via @capacitor/share; web: Web Share with files; not yet confirmed on a phone
 Music and sound-effect library,audio,skip,yes,skip,licensed catalogue
 CapCut preset packs (their effects filters stickers fonts templates),assets,skip,yes,skip,owned assets; we make our own
 Templates tab and template community,templates,skip,yes,skip,user content and network

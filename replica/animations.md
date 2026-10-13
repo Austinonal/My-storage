@@ -60,8 +60,22 @@ names (Thai), and none of CapCut's resource IDs, art or files.
 
 ## Our catalogue
 
-Built in `editor/src/anim.ts`: **100 In, 86 Out, 105 Combo** presets for clips,
+Built in `editor/src/anim.ts`: **126 In, 112 Out, 131 Combo** presets for clips,
 covering every mechanism above except the "not now" row. Out presets are In
 presets played backwards (with the direction flipped), plus a few that only
-make sense on the way out. Text In/Out/Loop reuse the engine when text
-layers are built.
+make sense on the way out.
+
+Added in the second round: shape reveals (heart, star, diamond, triangle,
+hexagon, each opening and closing, some turning), roll, unfold from an edge,
+hinge, corner zoom, side doors, 3D turn, stretch and squeeze, flash bursts,
+warm light leak, neon, glitch mosaic, swirl, zoom blur; combos for mirror,
+kaleidoscope, slow card spin, slow tilts and pans, blur / black-and-white /
+negative / mosaic / flash on the beat, hard shake, wind, ball bounce,
+glitch loop.
+
+Text gets **146 In, 132 Out, 146 Loop**: every clip preset plus 20 per-letter
+In/Out (typewriter, fade, pop, drop, rise, spin, zoom, slide, random, swing,
+flip, wave, stretch, elastic, roll, scatter, glitch, alternate up/down,
+unfold, colour sweep) and 15 per-letter loops (wave, jump, flicker, beat,
+shake, rock, rainbow, jelly, float, spin, zigzag, glitch, pulse wave, hang,
+colour flash).
