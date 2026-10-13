@@ -1,6 +1,7 @@
 import type { AudioClip, MediaClip, Project, Us } from './schema';
 import { openMedia } from './media';
-import { renderFrame } from './render';
+import { renderFrame, type TextBox } from './render';
+import { loadFonts } from './fonts';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
 
 type Source = { kind: 'video'; el: HTMLVideoElement } | { kind: 'photo'; img: ImageBitmap };
@@ -11,6 +12,7 @@ export class Player {
   playing = false;
   onTick?: (t: Us, playing: boolean) => void;
   onError?: (e: unknown) => void;
+  textBoxes: TextBox[] = []; // where text was drawn last, in canvas pixels
 
   private p: Project | null = null;
   private sources = new Map<string, Source>(); // main-track media, by asset id
@@ -21,7 +23,9 @@ export class Player {
   private clock = { at: 0, t: 0 };
   private stopAt: Us = 0;
 
-  constructor(private canvas: HTMLCanvasElement) {}
+  constructor(private canvas: HTMLCanvasElement) {
+    void loadFonts().then(() => this.draw());
+  }
 
   setProject(p: Project) {
     this.p = p;
@@ -143,8 +147,7 @@ export class Player {
     const clip = this.mainAt(this.time);
     const img = clip ? this.sourceOf(clip) : null;
     if (!img && this.playing) return; // keep the last frame while the next clip seeks
-    const t = clip ? Math.min(clip.duration, Math.max(0, this.time - clip.start)) : 0;
-    renderFrame(this.canvas.getContext('2d')!, this.canvas.width, this.canvas.height, p, clip, img, t);
+    this.textBoxes = renderFrame(this.canvas.getContext('2d')!, this.canvas.width, this.canvas.height, p, this.time, clip, img);
   }
 
   resize(w: number, h: number) {

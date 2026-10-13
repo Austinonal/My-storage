@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { MediaAsset, MediaClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAnim, setPhotoDuration, splitAt, trimClip, type TemplateSlot } from './timeline.ts';
+import type { MediaAsset, MediaClip, TextClip } from './schema.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAnim, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -192,5 +192,40 @@ test('template: a video shorter than its slot ends early; replacing keeps place 
   assert.equal(r.animIn?.presetId, 'in:pop');
   replaceClip(p, r.id, { ...asset, id: 'short', duration: 1 * SEC });
   assert.equal((p.tracks[0].clips[1] as MediaClip).duration, 1 * SEC);
+  assertValid(p);
+});
+
+test('text: added on its own track at the playhead, overlap opens a new track, edits and timing', () => {
+  const p = make();
+  const a = addText(p, 1 * SEC, 'สวัสดี');
+  const b = addText(p, 2 * SEC);
+  assert.equal(p.tracks.filter((t) => t.kind === 'text').length, 2);
+  updateText(p, a, { text: 'ซับไตเติ้ล', style: { colour: '#ff0000ff' }, transform: { y: 0.1, scale: 99 } });
+  const c = findClip(p, a) as TextClip;
+  assert.equal(c.text, 'ซับไตเติ้ล');
+  assert.equal(c.style.colour, '#ff0000ff');
+  assert.equal(c.style.fontId, 'kanit', 'other style fields kept');
+  assert.equal(c.transform.scale, 8, 'scale clamps');
+  setTextTiming(p, b, 6 * SEC, 1.5 * SEC);
+  assert.equal(findClip(p, b).start, 6 * SEC);
+  assert.equal(findClip(p, b).duration, 1.5 * SEC);
+  assertValid(p);
+});
+
+test('text: loop replaces in/out and split keeps in on the left, out on the right', () => {
+  const p = make();
+  const id = addText(p, 0);
+  setAnim(p, id, 'in', 'in:t-typewriter', 1 * SEC);
+  setAnim(p, id, 'combo', 'combo:t-wave', 1.5 * SEC);
+  const c = findClip(p, id) as TextClip;
+  assert.equal(c.animIn, null);
+  assert.equal(c.animLoop?.presetId, 'combo:t-wave');
+  setAnim(p, id, 'in', 'in:t-pop', 0.5 * SEC);
+  setAnim(p, id, 'out', 'out:t-fade', 0.5 * SEC);
+  assert.equal((findClip(p, id) as TextClip).animLoop, null);
+  const r = splitAt(p, id, 1.5 * SEC)!;
+  const [left, right] = [findClip(p, id) as TextClip, findClip(p, r) as TextClip];
+  assert.ok(left.animIn && !left.animOut && !right.animIn && right.animOut);
+  assert.equal(right.text, left.text);
   assertValid(p);
 });

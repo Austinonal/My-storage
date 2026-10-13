@@ -1,6 +1,7 @@
-import { poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
+import { glyphAt, poseAt, type Copy, type Pose, type Reveal } from './anim.ts';
+import { textImage } from './text';
 import { fitContain } from './timeline.ts';
-import type { MediaClip, Project, Us } from './schema';
+import type { MediaClip, Project, TextClip, Us } from './schema';
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
@@ -83,11 +84,12 @@ function drawImage(ctx: Ctx, img: CanvasImageSource, w: number, h: number, pose:
 }
 
 // Draws one clip frame into a W x H canvas with an animation pose. Preview and export both come through here.
-export function drawClip(ctx: Ctx, img: CanvasImageSource, srcW: number, srcH: number, W: number, H: number, pose: Pose) {
-  const { w, h } = fitContain(srcW, srcH, W, H);
+// `box` places the image (centre and size in canvas pixels); without it the image is fitted to the middle of the frame.
+export function drawClip(ctx: Ctx, img: CanvasImageSource, srcW: number, srcH: number, W: number, H: number, pose: Pose, box?: { cx: number; cy: number; w: number; h: number }) {
+  const { w, h } = box ?? fitContain(srcW, srcH, W, H);
   const rad = Math.PI / 180;
   ctx.save();
-  ctx.translate(W / 2 + pose.x * W, H / 2 + pose.y * H);
+  ctx.translate((box?.cx ?? W / 2) + pose.x * W, (box?.cy ?? H / 2) + pose.y * H);
   ctx.translate(pose.px * w, pose.py * h);
   ctx.rotate(pose.rot * rad);
   if (pose.skew) ctx.transform(1, 0, Math.tan(pose.skew * rad), 1, 0, 0);
@@ -124,8 +126,28 @@ export function drawClip(ctx: Ctx, img: CanvasImageSource, srcW: number, srcH: n
   ctx.restore();
 }
 
-// `t` is time inside the clip. `img` is null while the frame is not decoded yet.
-export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, clip: MediaClip | undefined, img: CanvasImageSource | null, t: Us) {
+export interface TextBox {
+  id: string;
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  rot: number;
+}
+
+function drawText(ctx: Ctx, W: number, H: number, c: TextClip, t: Us): TextBox {
+  const glyph = glyphAt(c, t);
+  const img = textImage(c, W, H, glyph);
+  const tr = c.transform;
+  const box = { cx: tr.x * W, cy: tr.y * H, w: img.w * tr.scale, h: img.h * tr.scale };
+  const pose = poseAt(c, t);
+  drawClip(ctx, img.canvas, img.w, img.h, W, H, { ...pose, rot: pose.rot + tr.rotation, alpha: pose.alpha * tr.opacity }, box);
+  return { id: c.id, ...box, rot: tr.rotation };
+}
+
+// One frame at timeline time `t`: the main-track clip (`img` is null while its frame is still decoding), then text on top.
+// Returns where each visible text was drawn, for tapping and dragging on the preview.
+export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, clip: MediaClip | undefined, img: CanvasImageSource | null): TextBox[] {
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.filter = 'none';
@@ -134,7 +156,13 @@ export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, clip: Me
   ctx.fillRect(0, 0, W, H);
   if (clip && img) {
     const a = p.assets[clip.assetId];
-    drawClip(ctx, img, a.width, a.height, W, H, poseAt(clip, t));
+    drawClip(ctx, img, a.width, a.height, W, H, poseAt(clip, Math.min(clip.duration, Math.max(0, t - clip.start))));
+  }
+  const boxes: TextBox[] = [];
+  for (const track of p.tracks) {
+    if (track.kind !== 'text' || track.hidden) continue;
+    for (const c of track.clips) if (c.kind === 'text' && t >= c.start && t < c.start + c.duration) boxes.push(drawText(ctx, W, H, c, t - c.start));
   }
   ctx.restore();
+  return boxes;
 }

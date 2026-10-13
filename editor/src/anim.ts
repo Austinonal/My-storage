@@ -1,4 +1,5 @@
-import type { Anim, MediaClip, Us } from './schema';
+import type { Anim, MediaClip, TextClip, Us } from './schema';
+import type { GlyphFn } from './text';
 
 // Shapes are in clip-box coordinates: the box spans -0.5..0.5 on both axes.
 export type Reveal =
@@ -58,6 +59,7 @@ export interface Preset {
   name: string;
   seconds: number;
   pose: Fn;
+  glyph?: GlyphFn; // per-letter motion, text only
 }
 
 const PI = Math.PI;
@@ -679,24 +681,98 @@ export const PRESETS: Record<Slot, Preset[]> = {
   combo: build('combo', COMBO),
 };
 
-const byId = new Map(Object.values(PRESETS).flat().map((p) => [p.id, p]));
+// ---- text: letter-by-letter presets ----
+
+// Letter i of n starts at (i / n) * spread of the way through and takes the rest.
+const each = (p: number, i: number, n: number, spread = 0.6) => clamp01((p - (n > 1 ? (i / (n - 1)) * spread : 0)) / (1 - spread));
+const order = (i: number) => (noise(i * 31 + 7) + 1) / 2;
+const still: Fn = () => ({});
+type GlyphEntry = [id: string, name: string, seconds: number, glyph: GlyphFn];
+
+const GLYPH_IN: GlyphEntry[] = [
+  ['t-typewriter', 'พิมพ์ทีละตัว', 1.5, (p, i, n) => ({ alpha: i < Math.floor(p * n + 1e-9) || p >= 1 ? 1 : 0 })],
+  ['t-fade', 'ค่อยๆ ชัดทีละตัว', 1, (p, i, n) => ({ alpha: each(p, i, n) })],
+  ['t-pop', 'เด้งทีละตัว', 1, (p, i, n) => ({ scale: outBack(each(p, i, n)), alpha: clamp01(each(p, i, n) * 3) })],
+  ['t-drop', 'ตกทีละตัว', 1.2, (p, i, n) => ({ y: -1.5 * (1 - ease.outBounce(each(p, i, n))), alpha: clamp01(each(p, i, n) * 3) })],
+  ['t-rise', 'ลอยขึ้นทีละตัว', 1, (p, i, n) => ({ y: 0.8 * (1 - outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+  ['t-spin', 'หมุนทีละตัว', 1, (p, i, n) => ({ rot: 180 * (1 - outCubic(each(p, i, n))), scale: each(p, i, n) })],
+  ['t-zoom', 'ซูมทีละตัว', 1, (p, i, n) => ({ scale: lerp(3, 1, outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+  ['t-slide', 'สไลด์ทีละตัว', 1, (p, i, n) => ({ x: 2 * (1 - outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+  ['t-random', 'สุ่มโผล่', 1, (p, i) => ({ alpha: clamp01((p - order(i) * 0.7) / 0.3) })],
+  ['t-swing', 'แกว่งทีละตัว', 1.2, (p, i, n) => ({ rot: 40 * (1 - ease.outElastic(each(p, i, n))), alpha: clamp01(each(p, i, n) * 4) })],
+  ['t-flip', 'พลิกทีละตัว', 1, (p, i, n) => ({ sy: cos((1 - outCubic(each(p, i, n))) * PI) })],
+  ['t-wave', 'คลื่นเข้า', 1.2, (p, i, n) => ({ y: -0.6 * sin(each(p, i, n) * PI), alpha: each(p, i, n) })],
+  ['t-stretch', 'ยืดทีละตัว', 1, (p, i, n) => ({ sx: lerp(3, 1, outCubic(each(p, i, n))), sy: lerp(0.2, 1, outCubic(each(p, i, n))), alpha: each(p, i, n) })],
+];
+
+const GLYPH_LOOP: GlyphEntry[] = [
+  ['t-wave', 'คลื่น', 1.5, (p, i, n) => ({ y: -0.25 * sin(2 * PI * (p - i / Math.max(4, n))) })],
+  ['t-jump', 'กระโดดทีละตัว', 1.5, (p, i, n) => ({ y: -0.5 * Math.max(0, sin(2 * PI * (p - i / n)) ** 9) })],
+  ['t-flicker', 'กะพริบทีละตัว', 1, (p, i) => ({ alpha: noise(i * 13 + Math.floor(p * 12)) > -0.5 ? 1 : 0.2 })],
+  ['t-beat', 'ตุบๆ ทีละตัว', 1, (p, i, n) => ({ scale: 1 + 0.25 * Math.max(0, sin(2 * PI * (p - i / n))) ** 4 })],
+  ['t-shake', 'สั่นทีละตัว', 1, (p, i) => {
+    const k = Math.floor(p * 24);
+    return { x: noise(i * 7 + k) * 0.06, y: noise(i * 11 + k + 50) * 0.06 };
+  }],
+  ['t-rock', 'โยกทีละตัว', 1.5, (p, i, n) => ({ rot: 12 * sin(2 * PI * (p + i / n)) })],
+  ['t-rainbow', 'สีรุ้งวิ่ง', 2, (p, i, n) => ({ hue: (360 * (p + i / n)) % 360 })],
+  ['t-jelly', 'เยลลี่ทีละตัว', 1.2, (p, i, n) => {
+    const w = 0.2 * sin(2 * PI * (p - i / n));
+    return { sx: 1 + w, sy: 1 - w };
+  }],
+  ['t-float', 'ลอยเบาๆ', 2, (p, i, n) => ({ y: -0.08 * sin(2 * PI * (p + i / (n * 2))) })],
+];
+
+const glyphs = (slot: Slot, list: GlyphEntry[], reverse = false): Preset[] =>
+  list.map(([id, name, seconds, fn]) => ({ id: `${slot}:${id}`, slot, name, seconds, pose: still, glyph: reverse ? (p, i, n) => fn(1 - p, i, n) : fn }));
+
+const OUT_NAMES: Record<string, string> = {
+  't-typewriter': 'ลบทีละตัว', 't-fade': 'จางทีละตัว', 't-pop': 'ยุบทีละตัว', 't-drop': 'ร่วงทีละตัว', 't-rise': 'จมทีละตัว',
+  't-spin': 'หมุนหายทีละตัว', 't-zoom': 'ซูมหายทีละตัว', 't-slide': 'สไลด์ออกทีละตัว', 't-random': 'สุ่มหาย', 't-swing': 'แกว่งหายทีละตัว',
+  't-flip': 'พลิกหายทีละตัว', 't-wave': 'คลื่นออก', 't-stretch': 'ยืดหายทีละตัว',
+};
+
+// Text gets the letter-by-letter presets first, then every clip preset (the whole block moves). Its third tab loops.
+export const TEXT_PRESETS: Record<Slot, Preset[]> = {
+  in: [...glyphs('in', GLYPH_IN), ...PRESETS.in],
+  out: [...glyphs('out', GLYPH_IN.map(([id, , s, fn]) => [id, OUT_NAMES[id], s, fn]), true), ...PRESETS.out],
+  combo: [...glyphs('combo', GLYPH_LOOP), ...PRESETS.combo],
+};
+
+const byId = new Map([...Object.values(PRESETS), ...Object.values(TEXT_PRESETS)].flat().map((p) => [p.id, p]));
 export const getPreset = (id: string) => byId.get(id);
 
 export function poseOf(preset: Preset, p: number): Pose {
   return { ...REST, ...preset.pose(clamp01(p)) };
 }
 
-function animPose(anim: Anim | null, t: Us, start: Us): Pose | null {
+type Active = { preset: Preset; p: number } | null;
+
+function active(anim: Anim | null, t: Us, start: Us): Active {
   if (!anim) return null;
   const preset = getPreset(anim.presetId);
   if (!preset || anim.duration <= 0) return null;
-  return poseOf(preset, (t - start) / anim.duration);
+  return { preset, p: clamp01((t - start) / anim.duration) };
 }
 
 // `t` is time inside the clip (0 = its first frame). At most one animation is active at a time.
-export function poseAt(c: MediaClip, t: Us): Pose {
-  if (c.animCombo) return t < c.animCombo.duration ? (animPose(c.animCombo, t, 0) ?? REST) : REST;
-  if (c.animIn && t < c.animIn.duration) return animPose(c.animIn, t, 0) ?? REST;
-  if (c.animOut && t >= c.duration - c.animOut.duration) return animPose(c.animOut, t, c.duration - c.animOut.duration) ?? REST;
-  return REST;
+function activeAt(c: MediaClip | TextClip, t: Us): Active {
+  const solo = c.kind === 'text' ? c.animLoop : c.animCombo;
+  if (solo) {
+    if (c.kind === 'text') return active(solo, t % solo.duration, 0); // a loop repeats for as long as the text is on screen
+    return t < solo.duration ? active(solo, t, 0) : null;
+  }
+  if (c.animIn && t < c.animIn.duration) return active(c.animIn, t, 0);
+  if (c.animOut && t >= c.duration - c.animOut.duration) return active(c.animOut, t, c.duration - c.animOut.duration);
+  return null;
+}
+
+export function poseAt(c: MediaClip | TextClip, t: Us): Pose {
+  const a = activeAt(c, t);
+  return a ? poseOf(a.preset, a.p) : REST;
+}
+
+export function glyphAt(c: TextClip, t: Us): { fn: GlyphFn; p: number } | undefined {
+  const a = activeAt(c, t);
+  return a?.preset.glyph ? { fn: a.preset.glyph, p: a.p } : undefined;
 }

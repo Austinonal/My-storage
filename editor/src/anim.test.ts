@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PRESETS, REST, poseAt, poseOf, type Pose, type Preset } from './anim.ts';
+import { PRESETS, REST, TEXT_PRESETS, poseAt, poseOf, type Pose, type Preset } from './anim.ts';
 import type { MediaAsset, MediaClip } from './schema.ts';
 import { SEC, assertValid, newProject, setAnim, trimClip } from './timeline.ts';
 
@@ -89,4 +89,22 @@ test('poseAt picks in at the start, out at the end, rest in between', () => {
   assert.ok(Math.abs(poseAt(c, 4 * SEC).alpha) < 1e-6);
   c.animIn = { presetId: 'in:removed-preset', duration: SEC };
   assert.equal(poseAt(c, 0).alpha, 1, 'unknown preset renders as rest');
+});
+
+test('text letter presets: In ends with every letter at rest, Out starts there, loops stay finite', () => {
+  const rest = { x: 0, y: 0, scale: 1, sx: 1, sy: 1, rot: 0, alpha: 1, hue: 0 };
+  const check = (preset: Preset, p: number) => {
+    for (let i = 0; i < 7; i++) {
+      const g = { ...rest, ...preset.glyph!(p, i, 7) };
+      for (const [k, v] of Object.entries(rest)) assert.ok(Math.abs(g[k as keyof typeof g] - v) < 1e-6, `${preset.id} letter ${i} ${k}=${g[k as keyof typeof g]}`);
+    }
+  };
+  const glyphOnly = (list: Preset[]) => list.filter((x) => x.glyph);
+  assert.ok(glyphOnly(TEXT_PRESETS.in).length >= 12 && glyphOnly(TEXT_PRESETS.combo).length >= 8);
+  for (const preset of glyphOnly(TEXT_PRESETS.in)) check(preset, 1);
+  for (const preset of glyphOnly(TEXT_PRESETS.out)) check(preset, 0);
+  for (const preset of glyphOnly(TEXT_PRESETS.combo)) {
+    for (let k = 0; k <= 20; k++) for (const v of Object.values(preset.glyph!(k / 20, 3, 7))) assert.ok(Number.isFinite(v), preset.id);
+  }
+  assert.ok(TEXT_PRESETS.in.length > PRESETS.in.length, 'text also gets every clip preset');
 });

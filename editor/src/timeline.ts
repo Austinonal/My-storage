@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Aspect, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type Us } from './schema.ts';
+import { SCHEMA_VERSION, type Aspect, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
@@ -58,11 +58,11 @@ export function addMedia(p: Project, assets: MediaAsset[], index = p.tracks[0].c
 }
 
 // Puts a clip on the first track of its kind where it does not overlap anything, or on a new track.
-function place(p: Project, c: AudioClip) {
+function place(p: Project, c: AudioClip | TextClip) {
   const fits = (clips: Clip[]) => clips.every((o) => o.id === c.id || o.start + o.duration <= c.start || c.start + c.duration <= o.start);
-  let track = p.tracks.find((t) => t.kind === 'audio' && fits(t.clips));
+  let track = p.tracks.find((t) => t.kind === c.kind && fits(t.clips));
   if (!track) {
-    track = { id: crypto.randomUUID(), kind: 'audio', muted: false, hidden: false, clips: [] };
+    track = { id: crypto.randomUUID(), kind: c.kind, muted: false, hidden: false, clips: [] };
     p.tracks.push(track);
   }
   track.clips.push(c);
@@ -107,7 +107,7 @@ export function moveClip(p: Project, clipId: string, to: { index: number } | { s
     if (ownTrackFree) {
       track.clips.push(c);
       normalize(p);
-    } else place(p, c as AudioClip);
+    } else place(p, c as AudioClip | TextClip);
   }
   dropEmptyTracks(p);
 }
@@ -127,13 +127,13 @@ export function splitAt(p: Project, clipId: string, at: Us) {
   const c = findClip(p, clipId);
   const f = frameUs(p);
   const cut = Math.round(at - c.start);
-  if (c.kind === 'text' || cut < f || c.duration - cut < f) return null;
+  if (cut < f || c.duration - cut < f) return null;
   const right = structuredClone(c);
   right.id = crypto.randomUUID();
   right.start = c.start + cut;
   right.duration = c.duration - cut;
   c.duration = cut;
-  if (c.kind !== 'photo') right.sourceIn = c.sourceIn + Math.round(cut * c.speed);
+  if (c.kind !== 'photo' && c.kind !== 'text' && right.kind !== 'text' && right.kind !== 'photo') right.sourceIn = c.sourceIn + Math.round(cut * c.speed);
   right.keyframes = c.keyframes.filter((k) => k.at >= cut).map((k) => ({ ...k, at: k.at - cut }));
   c.keyframes = c.keyframes.filter((k) => k.at <= cut);
   if (c.kind === 'audio' && right.kind === 'audio') {
@@ -144,7 +144,7 @@ export function splitAt(p: Project, clipId: string, at: Us) {
   } else if (c.kind !== 'audio' && right.kind !== 'audio') {
     c.animOut = null;
     right.animIn = null;
-    right.animCombo = null;
+    if (right.kind !== 'text') right.animCombo = null;
     fitAnims(c);
     fitAnims(right);
   }
@@ -245,8 +245,9 @@ export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us)
 }
 
 // A shorter clip squeezes its animations proportionally instead of dropping them.
-function fitAnims(c: MediaClip) {
-  if (c.animCombo) c.animCombo.duration = Math.min(c.animCombo.duration, c.duration);
+function fitAnims(c: MediaClip | TextClip) {
+  const solo = c.kind === 'text' ? c.animLoop : c.animCombo;
+  if (solo) solo.duration = Math.min(solo.duration, c.duration);
   const total = (c.animIn?.duration ?? 0) + (c.animOut?.duration ?? 0);
   if (total <= c.duration) return;
   const k = c.duration / total;
@@ -254,27 +255,71 @@ function fitAnims(c: MediaClip) {
   if (c.animOut) c.animOut.duration = Math.floor(c.animOut.duration * k);
 }
 
-const slotKey = { in: 'animIn', out: 'animOut', combo: 'animCombo' } as const;
-
-// The animation just chosen wins: Combo clears In/Out (and the reverse), and an In/Out that no longer fits beside it shrinks.
+// The animation just chosen wins: Combo (Loop for text) clears In/Out and the reverse; an In/Out that no longer fits beside it shrinks.
 export function setAnim(p: Project, clipId: string, slot: 'in' | 'out' | 'combo', presetId: string | null, duration: Us) {
   const c = findClip(p, clipId);
-  if (c.kind !== 'video' && c.kind !== 'photo') throw new Error('clip animations need a video or photo clip');
-  if (!presetId) {
-    c[slotKey[slot]] = null;
-    return;
-  }
-  const d = Math.round(clamp(duration, Math.min(frameUs(p), c.duration), c.duration));
-  c[slotKey[slot]] = { presetId, duration: d };
+  if (c.kind === 'audio') throw new Error('audio has no animations');
+  const anim = presetId ? { presetId, duration: Math.round(clamp(duration, Math.min(frameUs(p), c.duration), c.duration)) } : null;
   if (slot === 'combo') {
-    c.animIn = null;
-    c.animOut = null;
+    if (c.kind === 'text') c.animLoop = anim;
+    else c.animCombo = anim;
+    if (anim) c.animIn = c.animOut = null;
     return;
   }
-  c.animCombo = null;
+  c[slot === 'in' ? 'animIn' : 'animOut'] = anim;
+  if (!anim) return;
+  if (c.kind === 'text') c.animLoop = null;
+  else c.animCombo = null;
   const other = slot === 'in' ? 'animOut' : 'animIn';
   const o = c[other];
-  if (o && o.duration + d > c.duration) c[other] = c.duration - d >= frameUs(p) ? { ...o, duration: c.duration - d } : null;
+  if (o && o.duration + anim.duration > c.duration) c[other] = c.duration - anim.duration >= frameUs(p) ? { ...o, duration: c.duration - anim.duration } : null;
+}
+
+export const SUBTITLE: TextStyle = {
+  fontId: 'kanit',
+  size: 64,
+  colour: '#ffffffff',
+  align: 'center',
+  stroke: { colour: '#000000ff', width: 6 },
+  shadow: null,
+  background: null,
+};
+
+export function addText(p: Project, at: Us, text = 'ข้อความ', style: TextStyle = SUBTITLE, seconds = 3) {
+  const c: TextClip = {
+    id: crypto.randomUUID(),
+    kind: 'text',
+    text,
+    style: structuredClone(style),
+    transform: { x: 0.5, y: 0.82, scale: 1, rotation: 0, opacity: 1 },
+    start: Math.max(0, Math.round(at)),
+    duration: Math.max(frameUs(p), Math.round(seconds * SEC)),
+    keyframes: [],
+    animIn: null,
+    animOut: null,
+    animLoop: null,
+  };
+  place(p, c);
+  return c.id;
+}
+
+export function updateText(p: Project, clipId: string, patch: { text?: string; style?: Partial<TextStyle>; transform?: Partial<Transform> }) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'text') throw new Error('not a text clip');
+  if (patch.text !== undefined) c.text = patch.text;
+  if (patch.style) c.style = { ...c.style, ...patch.style };
+  if (patch.transform) c.transform = { ...c.transform, ...patch.transform };
+  c.transform.scale = clamp(c.transform.scale, 0.2, 8);
+}
+
+// Text sits anywhere in time: set its start and length directly (the trim handles use this).
+export function setTextTiming(p: Project, clipId: string, start: Us, duration: Us) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'text') throw new Error('not a text clip');
+  c.start = Math.max(0, Math.round(start));
+  c.duration = Math.max(frameUs(p), Math.round(duration));
+  fitAnims(c);
+  moveClip(p, c.id, { start: c.start });
 }
 
 export function normalize(p: Project) {

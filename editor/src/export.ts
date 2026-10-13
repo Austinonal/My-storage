@@ -17,6 +17,7 @@ import type { AudioClip, ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
 import { renderFrame } from './render';
+import { loadFonts } from './fonts';
 
 export class ExportError extends Error {
   constructor(readonly code: 'no-video-encoder') {
@@ -57,6 +58,7 @@ export async function exportProject(
   if (audio) output.addAudioTrack(audio);
 
   try {
+    await loadFonts();
     await output.start();
     // Audio goes in first: it is small, so the muxer can hold it while the video streams in.
     if (audio) await audio.add(await mixAudio(p, audible, total));
@@ -75,7 +77,7 @@ export async function exportProject(
         try {
           for (let n = i - timestamps.length; n < i; ) {
             signal.throwIfAborted();
-            renderFrame(ctx, width, height, p, clip, bitmap, frameTime(n) - clip.start);
+            renderFrame(ctx, width, height, p, frameTime(n), clip, bitmap);
             await video.add(n / s.fps, 1 / s.fps);
             onProgress(++n / frames);
           }
@@ -90,7 +92,7 @@ export async function exportProject(
         let n = i - timestamps.length;
         for await (const frame of sink.canvasesAtTimestamps(timestamps)) {
           signal.throwIfAborted();
-          renderFrame(ctx, width, height, p, clip, frame?.canvas ?? null, frameTime(n) - clip.start);
+          renderFrame(ctx, width, height, p, frameTime(n), clip, frame?.canvas ?? null);
           await video.add(n / s.fps, 1 / s.fps);
           onProgress(++n / frames);
         }
