@@ -13,7 +13,7 @@ import {
   getFirstEncodableVideoCodec,
   type VideoCodec,
 } from 'mediabunny';
-import type { ExportSettings, MediaClip, Project } from './schema';
+import type { AudioClip, ExportSettings, MediaClip, Project } from './schema';
 import { FRAME_NUDGE, SEC, fitContain, outputSize, projectDuration, sourceOut } from './timeline.ts';
 import { deleteExport, exportFile, openInput, openMedia } from './media';
 import { renderFrame } from './render';
@@ -38,11 +38,14 @@ export async function exportProject(
   const videoCodec = await getFirstEncodableVideoCodec(prefer, { width, height, frameRate: s.fps, quality: quality[s.bitrate] });
   if (!videoCodec) throw new ExportError('no-video-encoder');
 
-  // shortcut: only the main track's video clips are rendered; overlays, text and audio tracks come with those features.
+  // shortcut: renders the main track (videos and photos) plus audio tracks; overlays and text come with those features.
   const clips = p.tracks[0].clips as MediaClip[];
   const total = projectDuration(p);
-  const wantsAudio = !p.tracks[0].muted && clips.some((c) => p.assets[c.assetId].hasAudio && c.volume > 0);
-  const audioCodec = wantsAudio ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE }) : null;
+  const audible = p.tracks
+    .filter((t) => !t.muted)
+    .flatMap((t) => t.clips as (MediaClip | AudioClip)[])
+    .filter((c) => c.kind !== 'photo' && p.assets[c.assetId].hasAudio && c.volume > 0 && c.start < total);
+  const audioCodec = audible.length ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE }) : null;
 
   const handle = await exportFile(p.id);
   const output = new Output({ format: new Mp4OutputFormat(), target: new StreamTarget(await handle.createWritable()) });
@@ -56,7 +59,7 @@ export async function exportProject(
   try {
     await output.start();
     // Audio goes in first: it is small, so the muxer can hold it while the video streams in.
-    if (audio) await audio.add(await mixAudio(p, clips, total));
+    if (audio) await audio.add(await mixAudio(p, audible, total));
     const frames = Math.max(1, Math.round((total / SEC) * s.fps));
     const frameTime = (i: number) => Math.round((i * SEC) / s.fps);
     let i = 0;
@@ -66,6 +69,20 @@ export async function exportProject(
       const timestamps: number[] = [];
       for (; i < frames && frameTime(i) < clip.start + clip.duration; i++) {
         timestamps.push((clip.sourceIn + (frameTime(i) - clip.start) * clip.speed) / SEC + FRAME_NUDGE);
+      }
+      if (clip.kind === 'photo') {
+        const bitmap = await createImageBitmap(await openMedia(asset.file));
+        try {
+          for (let n = i - timestamps.length; n < i; ) {
+            signal.throwIfAborted();
+            renderFrame(ctx, width, height, p, clip, bitmap, frameTime(n) - clip.start);
+            await video.add(n / s.fps, 1 / s.fps);
+            onProgress(++n / frames);
+          }
+        } finally {
+          bitmap.close();
+        }
+        continue;
       }
       const input = openInput(await openMedia(asset.file));
       try {
@@ -91,11 +108,10 @@ export async function exportProject(
 }
 
 // shortcut: renders the whole mix in memory (about 23 MB per stereo minute); render in chunks once exports run past a few minutes.
-async function mixAudio(p: Project, clips: MediaClip[], total: number): Promise<AudioBuffer> {
+async function mixAudio(p: Project, clips: (MediaClip | AudioClip)[], total: number): Promise<AudioBuffer> {
   const ctx = new OfflineAudioContext(2, Math.max(1, Math.ceil((total / SEC) * SAMPLE_RATE)), SAMPLE_RATE);
   for (const clip of clips) {
     const asset = p.assets[clip.assetId];
-    if (!asset.hasAudio || clip.volume === 0) continue;
     const input = openInput(await openMedia(asset.file));
     try {
       const sink = new AudioBufferSink((await input.getPrimaryAudioTrack())!);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { MediaAsset, MediaClip } from './schema.ts';
-import { SEC, assertValid, fitContain, newProject, outputSize, projectDuration, trimClip } from './timeline.ts';
+import { SEC, addAudio, addMedia, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, setAnim, setPhotoDuration, splitAt, trimClip } from './timeline.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -73,4 +73,82 @@ test('output size follows the aspect, short side = resolution', () => {
 
 test('fitContain letterboxes a landscape clip in a portrait frame', () => {
   assert.deepEqual(fitContain(1920, 1080, 720, 1280), { x: 0, y: 438, w: 720, h: 405 });
+});
+
+const photo: MediaAsset = { id: 'ph', kind: 'photo', name: 'p.jpg', file: 'media/p1/ph', bytes: 1, duration: 0, width: 1080, height: 1080, rotation: 0, hasAudio: false };
+const song: MediaAsset = { id: 'au', kind: 'audio', name: 'song.mp3', file: 'media/p1/au', bytes: 1, duration: 3 * SEC, width: 0, height: 0, rotation: 0, hasAudio: true };
+
+test('add video and photo to the main track, photos last 3 s', () => {
+  const p = make();
+  const [id] = addMedia(p, [photo]);
+  assert.equal(p.tracks[0].clips.length, 2);
+  assert.equal((findClip(p, id) as MediaClip).kind, 'photo');
+  assert.equal(projectDuration(p), 13 * SEC);
+  addMedia(p, [{ ...asset, id: 'a2' }], 0);
+  assert.equal(p.tracks[0].clips[0].assetId, 'a2');
+  assertValid(p);
+});
+
+test('audio goes on its own track; overlapping audio opens a new track', () => {
+  const p = make();
+  addAudio(p, song, 1 * SEC);
+  const b = addAudio(p, song, 2 * SEC);
+  assert.equal(p.tracks.filter((t) => t.kind === 'audio').length, 2);
+  assert.equal(findClip(p, b).start, 2 * SEC);
+  assert.equal(projectDuration(p), 10 * SEC, 'audio does not lengthen the video');
+  assertValid(p);
+});
+
+test('move audio in time and reorder main clips', () => {
+  const p = make();
+  const a = addAudio(p, song, 0);
+  moveClip(p, a, { start: 4.5 * SEC });
+  assert.equal(findClip(p, a).start, 4.5 * SEC);
+  moveClip(p, a, { start: -3 });
+  assert.equal(findClip(p, a).start, 0);
+  const [ph] = addMedia(p, [photo]);
+  moveClip(p, ph, { index: 0 });
+  assert.equal(p.tracks[0].clips[0].id, ph);
+  assert.equal(p.tracks[0].clips[1].start, 3 * SEC);
+  assertValid(p);
+});
+
+test('delete keeps the last main clip and drops empty audio tracks', () => {
+  const p = make();
+  deleteClip(p, clipOf(p).id);
+  assert.equal(p.tracks[0].clips.length, 1);
+  const a = addAudio(p, song, 0);
+  deleteClip(p, a);
+  assert.equal(p.tracks.length, 1);
+  assertValid(p);
+});
+
+test('split a video: halves line up in source and keep in/out on the outer ends', () => {
+  const p = make();
+  const c = clipOf(p);
+  c.animIn = { presetId: 'in:fade', duration: SEC / 2 };
+  c.animOut = { presetId: 'out:fade', duration: SEC / 2 };
+  const r = splitAt(p, c.id, 4 * SEC)!;
+  const [left, right] = p.tracks[0].clips as MediaClip[];
+  assert.equal(left.duration, 4 * SEC);
+  assert.equal(right.id, r);
+  assert.equal(right.sourceIn, 4 * SEC);
+  assert.equal(right.start, 4 * SEC);
+  assert.ok(left.animIn && !left.animOut && !right.animIn && right.animOut);
+  assert.equal(splitAt(p, left.id, 10), null, 'too close to the edge');
+  assertValid(p);
+});
+
+test('photo duration clamps and squeezes its animations', () => {
+  const p = make();
+  const [ph] = addMedia(p, [photo]);
+  setAnim(p, ph, 'combo', 'combo:wine', 3 * SEC);
+  setPhotoDuration(p, ph, 1 * SEC);
+  const c = findClip(p, ph) as MediaClip;
+  assert.equal(c.duration, 1 * SEC);
+  assert.equal(c.animCombo?.duration, 1 * SEC);
+  setPhotoDuration(p, ph, 999 * SEC);
+  assert.equal(c.duration, 120 * SEC);
+  assert.throws(() => trimClip(p, ph, 'out', SEC));
+  assertValid(p);
 });

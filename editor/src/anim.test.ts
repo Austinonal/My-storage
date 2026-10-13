@@ -4,7 +4,7 @@ import { PRESETS, REST, poseAt, poseOf, type Pose, type Preset } from './anim.ts
 import type { MediaAsset, MediaClip } from './schema.ts';
 import { SEC, assertValid, newProject, setAnim, trimClip } from './timeline.ts';
 
-const NUMERIC = ['x', 'y', 'scale', 'sx', 'sy', 'rot', 'skew', 'alpha', 'blur', 'gray', 'bright', 'invert', 'flash', 'pixel'] as const;
+const NUMERIC = ['x', 'y', 'scale', 'sx', 'sy', 'rot', 'skew', 'alpha', 'blur', 'gray', 'bright', 'invert', 'hue', 'sat', 'sepia', 'contrast', 'flash', 'pixel'] as const;
 
 // Pivot only matters while rotated/scaled, so it is not compared.
 function assertRest(pose: Pose, label: string) {

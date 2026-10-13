@@ -3,7 +3,7 @@ import type { MediaAsset } from './schema';
 import { SEC } from './timeline.ts';
 
 export class ImportError extends Error {
-  constructor(readonly code: 'unsupported-format' | 'no-video' | 'unsupported-codec') {
+  constructor(readonly code: 'unsupported-format' | 'no-video' | 'no-audio' | 'unsupported-codec' | 'bad-image') {
     super(code);
   }
 }
@@ -41,13 +41,39 @@ async function probeVideo(file: Blob) {
   }
 }
 
+async function probeAudio(file: Blob) {
+  const input = openInput(file);
+  try {
+    if (!(await input.canRead())) throw new ImportError('unsupported-format');
+    const audio = await input.getPrimaryAudioTrack();
+    if (!audio) throw new ImportError('no-audio');
+    if (!(await audio.canDecode())) throw new ImportError('unsupported-codec');
+    return { duration: Math.floor((await input.computeDuration([audio])) * SEC), width: 0, height: 0, rotation: 0 as const, hasAudio: true };
+  } finally {
+    input.dispose();
+  }
+}
+
+async function probePhoto(file: Blob) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const size = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return { ...size, duration: 0, rotation: 0 as const, hasAudio: false };
+  } catch {
+    throw new ImportError('bad-image');
+  }
+}
+
+// `as: 'audio'` takes only the sound, so a video file works too (that is "extract audio").
 // shortcut: copies the whole file into OPFS (doubles storage on the phone); reference Android content URIs once the APK has a native file plugin.
-export async function importVideo(projectId: string, file: File): Promise<MediaAsset> {
-  const probe = await probeVideo(file);
+export async function importMedia(projectId: string, file: File, as: 'visual' | 'audio' = 'visual'): Promise<MediaAsset> {
+  const kind = as === 'audio' ? 'audio' : file.type.startsWith('image/') ? 'photo' : 'video';
+  const probe = kind === 'audio' ? await probeAudio(file) : kind === 'photo' ? await probePhoto(file) : await probeVideo(file);
   const id = crypto.randomUUID();
   const handle = await (await dir('media', projectId)).getFileHandle(id, { create: true });
   await file.stream().pipeTo(await handle.createWritable());
-  return { id, kind: 'video', name: file.name, file: `media/${projectId}/${id}`, bytes: file.size, ...probe };
+  return { id, kind, name: file.name, file: `media/${projectId}/${id}`, bytes: file.size, ...probe };
 }
 
 export async function openMedia(path: string): Promise<File> {

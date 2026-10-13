@@ -60,7 +60,7 @@ names (Thai), and none of CapCut's resource IDs, art or files.
 
 ## Our catalogue
 
-Built in `editor/src/anim.ts`: **60 In, 51 Out, 70 Combo** presets for clips,
+Built in `editor/src/anim.ts`: **100 In, 86 Out, 101 Combo** presets for clips,
 covering every mechanism above except the "not now" row. Out presets are In
 presets played backwards (with the direction flipped), plus a few that only
 make sense on the way out. Text In/Out/Loop reuse the engine when text

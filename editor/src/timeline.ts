@@ -6,13 +6,15 @@ export const FRAME_NUDGE = 0.001;
 export const frameUs = (p: Project): Us => Math.round(SEC / p.fps);
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-export function newProject(id: string, name: string, asset: MediaAsset, now: string): Project {
-  const clip: MediaClip = {
+export const PHOTO_SECONDS = 3;
+
+function mediaClip(asset: MediaAsset): MediaClip {
+  return {
     id: crypto.randomUUID(),
-    kind: 'video',
+    kind: asset.kind === 'photo' ? 'photo' : 'video',
     assetId: asset.id,
     start: 0,
-    duration: asset.duration,
+    duration: asset.kind === 'photo' ? PHOTO_SECONDS * SEC : asset.duration,
     keyframes: [],
     sourceIn: 0,
     speed: 1,
@@ -26,6 +28,9 @@ export function newProject(id: string, name: string, asset: MediaAsset, now: str
     animOut: null,
     animCombo: null,
   };
+}
+
+export function newProject(id: string, name: string, asset: MediaAsset, now: string): Project {
   return {
     version: SCHEMA_VERSION,
     id,
@@ -36,9 +41,131 @@ export function newProject(id: string, name: string, asset: MediaAsset, now: str
     fps: 30,
     canvas: { kind: 'colour', colour: '#000000' },
     assets: { [asset.id]: asset },
-    tracks: [{ id: crypto.randomUUID(), kind: 'main', muted: false, hidden: false, clips: [clip] }],
+    tracks: [{ id: crypto.randomUUID(), kind: 'main', muted: false, hidden: false, clips: [mediaClip(asset)] }],
     transitions: [],
   };
+}
+
+// Videos and photos go onto the main track at `index` (end by default), in the order given.
+export function addMedia(p: Project, assets: MediaAsset[], index = p.tracks[0].clips.length) {
+  const clips = assets.map((a) => {
+    p.assets[a.id] = a;
+    return mediaClip(a);
+  });
+  p.tracks[0].clips.splice(clamp(index, 0, p.tracks[0].clips.length), 0, ...clips);
+  normalize(p);
+  return clips.map((c) => c.id);
+}
+
+// Puts a clip on the first track of its kind where it does not overlap anything, or on a new track.
+function place(p: Project, c: AudioClip) {
+  const fits = (clips: Clip[]) => clips.every((o) => o.id === c.id || o.start + o.duration <= c.start || c.start + c.duration <= o.start);
+  let track = p.tracks.find((t) => t.kind === 'audio' && fits(t.clips));
+  if (!track) {
+    track = { id: crypto.randomUUID(), kind: 'audio', muted: false, hidden: false, clips: [] };
+    p.tracks.push(track);
+  }
+  track.clips.push(c);
+  normalize(p);
+}
+
+export function addAudio(p: Project, asset: MediaAsset, at: Us) {
+  p.assets[asset.id] = asset;
+  const c: AudioClip = { id: crypto.randomUUID(), kind: 'audio', assetId: asset.id, start: Math.max(0, Math.round(at)), duration: asset.duration, keyframes: [], sourceIn: 0, speed: 1, volume: 1, fadeIn: 0, fadeOut: 0 };
+  place(p, c);
+  return c.id;
+}
+
+function trackOf(p: Project, clipId: string) {
+  const track = p.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+  if (!track) throw new Error(`no clip ${clipId}`);
+  return track;
+}
+
+function dropEmptyTracks(p: Project) {
+  p.tracks = p.tracks.filter((t, i) => i === 0 || t.clips.length > 0);
+  const main = p.tracks[0].clips;
+  p.transitions = p.transitions.filter((tr) => {
+    const i = main.findIndex((c) => c.id === tr.fromClipId);
+    return i >= 0 && main[i + 1]?.id === tr.toClipId;
+  });
+}
+
+// Main-track clips move to a new position in the order; clips on other tracks move to a new start time.
+export function moveClip(p: Project, clipId: string, to: { index: number } | { start: Us }) {
+  const track = trackOf(p, clipId);
+  const i = track.clips.findIndex((c) => c.id === clipId);
+  const [c] = track.clips.splice(i, 1);
+  if (track.kind === 'main') {
+    if (!('index' in to)) throw new Error('main-track clips move by index');
+    track.clips.splice(clamp(to.index, 0, track.clips.length), 0, c);
+    normalize(p);
+  } else {
+    if (!('start' in to)) throw new Error('clips off the main track move by start time');
+    c.start = Math.max(0, Math.round(to.start));
+    const ownTrackFree = track.clips.every((o) => o.start + o.duration <= c.start || c.start + c.duration <= o.start);
+    if (ownTrackFree) {
+      track.clips.push(c);
+      normalize(p);
+    } else place(p, c as AudioClip);
+  }
+  dropEmptyTracks(p);
+}
+
+// The main track always keeps at least one clip.
+export function deleteClip(p: Project, clipId: string) {
+  const track = trackOf(p, clipId);
+  if (track.kind === 'main' && track.clips.length === 1) return;
+  track.clips = track.clips.filter((c) => c.id !== clipId);
+  normalize(p);
+  dropEmptyTracks(p);
+}
+
+// Splits at timeline time `at`; In stays on the left half, Out and fades on the outer ends. Returns the right half's id.
+export function splitAt(p: Project, clipId: string, at: Us) {
+  const track = trackOf(p, clipId);
+  const c = findClip(p, clipId);
+  const f = frameUs(p);
+  const cut = Math.round(at - c.start);
+  if (c.kind === 'text' || cut < f || c.duration - cut < f) return null;
+  const right = structuredClone(c);
+  right.id = crypto.randomUUID();
+  right.start = c.start + cut;
+  right.duration = c.duration - cut;
+  c.duration = cut;
+  if (c.kind !== 'photo') right.sourceIn = c.sourceIn + Math.round(cut * c.speed);
+  right.keyframes = c.keyframes.filter((k) => k.at >= cut).map((k) => ({ ...k, at: k.at - cut }));
+  c.keyframes = c.keyframes.filter((k) => k.at <= cut);
+  if (c.kind === 'audio' && right.kind === 'audio') {
+    c.fadeOut = 0;
+    right.fadeIn = 0;
+    c.fadeIn = Math.min(c.fadeIn, c.duration);
+    right.fadeOut = Math.min(right.fadeOut, right.duration);
+  } else if (c.kind !== 'audio' && right.kind !== 'audio') {
+    c.animOut = null;
+    right.animIn = null;
+    right.animCombo = null;
+    fitAnims(c);
+    fitAnims(right);
+  }
+  track.clips.splice(track.clips.indexOf(c) + 1, 0, right);
+  normalize(p);
+  dropEmptyTracks(p);
+  return right.id;
+}
+
+export function setPhotoDuration(p: Project, clipId: string, duration: Us) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'photo') throw new Error('only photos have a free duration');
+  c.duration = Math.round(clamp(duration, frameUs(p), 120 * SEC));
+  fitAnims(c);
+  normalize(p);
+}
+
+export function setVolume(p: Project, clipId: string, volume: number) {
+  const c = findClip(p, clipId);
+  if (c.kind === 'text') throw new Error('text has no volume');
+  c.volume = clamp(volume, 0, 2);
 }
 
 export function findClip(p: Project, clipId: string): Clip {
@@ -51,7 +178,7 @@ export const sourceOut = (c: MediaClip | AudioClip): Us => c.sourceIn + Math.rou
 // `at` is a time in the source file; the edge moves there, clamped so the clip stays at least one frame long.
 export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us) {
   const c = findClip(p, clipId);
-  if (c.kind === 'text') throw new Error('text clips are trimmed by start/duration');
+  if (c.kind === 'text' || c.kind === 'photo') throw new Error('text and photos change duration, not source range');
   const assetDuration = p.assets[c.assetId].duration;
   const minSpan = Math.ceil(frameUs(p) * c.speed);
   const out = sourceOut(c);
@@ -112,8 +239,8 @@ export function normalize(p: Project) {
   for (const track of p.tracks.slice(1)) track.clips.sort((a, b) => a.start - b.start);
 }
 
-export const projectDuration = (p: Project): Us =>
-  Math.max(0, ...p.tracks.flatMap((t) => t.clips.map((c) => c.start + c.duration)));
+// The video is as long as the main track; anything on other tracks past its end is cut.
+export const projectDuration = (p: Project): Us => p.tracks[0].clips.reduce((end, c) => Math.max(end, c.start + c.duration), 0);
 
 // Throws on the first broken invariant from replica/architecture.md.
 export function assertValid(p: Project) {
@@ -140,7 +267,7 @@ export function assertValid(p: Project) {
       const asset = p.assets[c.assetId];
       if (!asset) fail(`missing asset ${c.assetId}`);
       if (c.speed < 0.1 || c.speed > 100) fail(`speed ${c.speed} on ${c.id}`);
-      if (c.sourceIn < 0 || sourceOut(c) > asset.duration) fail(`source range outside asset on ${c.id}`);
+      if (c.kind !== 'photo' && (c.sourceIn < 0 || sourceOut(c) > asset.duration)) fail(`source range outside asset on ${c.id}`);
       if (c.kind === 'audio' && c.fadeIn + c.fadeOut > c.duration) fail(`fades longer than ${c.id}`);
     }
   });

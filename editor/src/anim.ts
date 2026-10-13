@@ -3,7 +3,9 @@ import type { Anim, MediaClip, Us } from './schema';
 // Shapes are in clip-box coordinates: the box spans -0.5..0.5 on both axes.
 export type Reveal =
   | { kind: 'rect'; x0: number; y0: number; x1: number; y1: number }
-  | { kind: 'circle'; r: number } // 1 = covers the box
+  | { kind: 'circle'; r: number; cx?: number; cy?: number } // 1 = covers the box, centre in box fractions
+  | { kind: 'clock'; deg: number } // sweeps clockwise from 12 o'clock around the centre
+  | { kind: 'grid'; n: number; amount: number } // n x n cells growing from their centres
   | { kind: 'blinds'; n: number; amount: number; vertical: boolean }
   | { kind: 'wedge'; deg: number } // sweeps from the left around the bottom centre
   | { kind: 'diagonal'; amount: number };
@@ -32,6 +34,10 @@ export interface Pose {
   gray: number;
   bright: number;
   invert: number;
+  hue: number; // degrees
+  sat: number; // 1 = unchanged
+  sepia: number;
+  contrast: number; // 1 = unchanged
   flash: number; // white over the clip, 0..1
   pixel: number; // mosaic block, canvas-height fraction
   reveal: Reveal | null;
@@ -41,7 +47,7 @@ export interface Pose {
 
 export const REST: Pose = {
   x: 0, y: 0, scale: 1, sx: 1, sy: 1, rot: 0, skew: 0, px: 0, py: 0, alpha: 1,
-  blur: 0, gray: 0, bright: 1, invert: 0, flash: 0, pixel: 0, reveal: null, copies: null, strips: null,
+  blur: 0, gray: 0, bright: 1, invert: 0, hue: 0, sat: 1, sepia: 0, contrast: 1, flash: 0, pixel: 0, reveal: null, copies: null, strips: null,
 };
 
 type Fn = (p: number) => Partial<Pose>;
@@ -174,6 +180,86 @@ const riseIn: Fn = (p) => ({ y: 0.12 * (1 - outCubic(p)), alpha: p });
 const elasticIn: Fn = (p) => ({ scale: ease.outElastic(p) });
 const dropShakeX: Fn = (p) => ({ ...tremble(0.06, 7)(p), scale: lerp(1.2, 1, outCubic(p)) });
 
+// ---- more entrances ----
+
+const bounceFrom = (d: Dir): Fn => (p) => {
+  const k = 1 - ease.outBounce(p);
+  return { x: DIR[d][0] * k, y: DIR[d][1] * k };
+};
+const elasticFrom = (d: Dir): Fn => (p) => {
+  const k = 1 - ease.outElastic(p);
+  return { x: DIR[d][0] * 0.6 * k, y: DIR[d][1] * 0.6 * k, alpha: clamp01(p * 4) };
+};
+const overshootFrom = (d: Dir): Fn => (p) => {
+  const k = 1 - outBack(p);
+  return { x: DIR[d][0] * 0.7 * k, y: DIR[d][1] * 0.7 * k };
+};
+const flipXIn: Fn = (p) => ({ sy: cos((1 - outCubic(p)) * PI), bright: lerp(0.6, 1, p) });
+const zoomSpinIn: Fn = (p) => ({ scale: outCubic(p), rot: 360 * (1 - outCubic(p)) });
+const strobeIn: Fn = (p) => ({ alpha: p >= 1 ? 1 : Math.floor(p * 10) % 2 ? clamp01(p * 1.2) : 0.15 * p });
+const heartbeatIn: Fn = (p) => ({ scale: 1 + 0.25 * Math.abs(sin(p * PI * 3)) * (1 - p), alpha: clamp01(p * 4) });
+const steppedWipe: Fn = (p) => ({ reveal: p < 1 ? { kind: 'rect', x0: -0.5, y0: -0.5, x1: -0.5 + Math.ceil(p * 8) / 8, y1: 0.5 } : null });
+const irisCorner: Fn = (p) => ({ reveal: p < 1 ? { kind: 'circle', r: outCubic(p), cx: -0.5, cy: -0.5 } : null });
+const clockIn: Fn = (p) => ({ reveal: p < 1 ? { kind: 'clock', deg: 360 * ease.inOutQuad(p) } : null });
+const barnDoor: Fn = (p) => {
+  const e = outCubic(p);
+  return { reveal: p < 1 ? { kind: 'rect', x0: -0.5, y0: -0.5 * e, x1: 0.5, y1: 0.5 * e } : null };
+};
+const boxIn: Fn = (p) => {
+  const e = outCubic(p);
+  return { reveal: p < 1 ? { kind: 'rect', x0: -0.5 * e, y0: -0.5 * e, x1: 0.5 * e, y1: 0.5 * e } : null };
+};
+const checkerIn: Fn = (p) => ({ reveal: p < 1 ? { kind: 'grid', n: 6, amount: outCubic(p) } : null });
+const halvesIn: Fn = (p) => {
+  const k = 1 - outCubic(p);
+  return {
+    copies: p < 1 ? [
+      { dx: -k, reveal: { kind: 'rect', x0: -0.5, y0: -0.5, x1: 0.5, y1: 0 } },
+      { dx: k, reveal: { kind: 'rect', x0: -0.5, y0: 0, x1: 0.5, y1: 0.5 } },
+    ] : null,
+  };
+};
+const quadIn: Fn = (p) => {
+  const k = 1 - outCubic(p);
+  return {
+    copies: p < 1 ? [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => ({
+      dx: sx * 0.6 * k,
+      dy: sy * 0.6 * k,
+      reveal: { kind: 'rect' as const, x0: sx < 0 ? -0.5 : 0, y0: sy < 0 ? -0.5 : 0, x1: sx < 0 ? 0 : 0.5, y1: sy < 0 ? 0 : 0.5 },
+    })) : null,
+  };
+};
+const earthquakeIn: Fn = (p) => {
+  const n = Math.floor(p * 30);
+  return { x: noise(n) * 0.06 * (1 - p), y: noise(n + 40) * 0.06 * (1 - p), blur: 0.01 * (1 - p), alpha: clamp01(p * 3) };
+};
+const vertigoIn: Fn = (p) => ({ scale: lerp(1.4, 1, outCubic(p)), rot: 12 * (1 - outCubic(p)), blur: 0.02 * (1 - p), alpha: clamp01(p * 2) });
+const fromBlack: Fn = (p) => ({ bright: p });
+const overexpose: Fn = (p) => ({ bright: lerp(3, 1, outCubic(p)) });
+const sepiaIn: Fn = (p) => ({ sepia: 1 - p, contrast: lerp(0.8, 1, p) });
+const hueIn: Fn = (p) => ({ hue: 360 * (1 - outCubic(p)), sat: lerp(2, 1, p) });
+const satIn: Fn = (p) => ({ sat: lerp(3, 1, outCubic(p)) });
+const contrastIn: Fn = (p) => ({ contrast: lerp(3, 1, outCubic(p)) });
+const zoomTrailIn: Fn = (p) => {
+  const k = 1 - outCubic(p);
+  return { scale: lerp(0.6, 1, outCubic(p)), copies: p < 1 ? [3, 2, 1, 0].map((i) => ({ scale: 1 + i * 0.12 * k, alpha: i ? 0.25 / i : 1 })) : null };
+};
+const dropSquash: Fn = (p) => {
+  const sq = sin(clamp01((p - 0.6) / 0.4) * PI) * 0.25;
+  return { y: -(1 - ease.inQuad(clamp01(p / 0.6))), py: 0.5, sx: 1 + sq, sy: 1 - sq };
+};
+const rubberIn: Fn = (p) => {
+  const w = sin(p * PI * 3) * 0.3 * (1 - p);
+  return { sx: 1 + w, sy: 1 - w, scale: lerp(0.5, 1, outCubic(p)) };
+};
+const tadaIn: Fn = (p) => ({ scale: lerp(0.8, 1, outCubic(p)) + 0.05 * sin(p * PI * 6) * (1 - p), rot: 4 * sin(p * PI * 8) * (1 - p), alpha: clamp01(p * 3) });
+const lightSpeed: Fn = (p) => ({ x: 1 - outCubic(p), skew: -30 * (1 - outCubic(p)), alpha: clamp01(p * 2) });
+const skewFromLeft: Fn = (p) => ({ skew: -35 * (1 - outCubic(p)), x: -0.3 * (1 - outCubic(p)), alpha: clamp01(p * 2) });
+const sinkOut: Fn = (p) => {
+  const sq = 0.2 * sin(clamp01(p * 2) * PI);
+  return { y: 1.2 * ease.inBack(p), sx: 1 + sq, sy: 1 - sq };
+};
+
 type Entry = [id: string, name: string, seconds: number, fn: Fn];
 
 const IN: Entry[] = [
@@ -237,6 +323,46 @@ const IN: Entry[] = [
   ['split', 'รวมร่าง', 0.8, splitIn],
   ['skew', 'เฉียงเข้า', 0.5, skewIn],
   ['rise', 'ลอยขึ้นมา', 0.5, riseIn],
+  ['bounce-left', 'เด้งเข้าจากขวา', 1, bounceFrom('right')],
+  ['bounce-right', 'เด้งเข้าจากซ้าย', 1, bounceFrom('left')],
+  ['bounce-up', 'เด้งขึ้นจากล่าง', 1, bounceFrom('down')],
+  ['elastic-left', 'สปริงจากขวา', 1, elasticFrom('right')],
+  ['elastic-right', 'สปริงจากซ้าย', 1, elasticFrom('left')],
+  ['elastic-up', 'สปริงจากล่าง', 1, elasticFrom('down')],
+  ['overshoot-up', 'พุ่งเกินจากล่าง', 0.6, overshootFrom('down')],
+  ['overshoot-down', 'พุ่งเกินจากบน', 0.6, overshootFrom('up')],
+  ['overshoot-left', 'พุ่งเกินจากขวา', 0.6, overshootFrom('right')],
+  ['overshoot-right', 'พุ่งเกินจากซ้าย', 0.6, overshootFrom('left')],
+  ['corner-tl', 'สไลด์จากมุมซ้ายบน', 0.6, slideFrom('up-left')],
+  ['corner-tr', 'สไลด์จากมุมขวาบน', 0.6, slideFrom('up-right')],
+  ['corner-bl', 'สไลด์จากมุมซ้ายล่าง', 0.6, slideFrom('down-left')],
+  ['corner-br', 'สไลด์จากมุมขวาล่าง', 0.6, slideFrom('down-right')],
+  ['flip-x', 'ตีลังกาเข้า', 0.6, flipXIn],
+  ['zoom-spin', 'ซูมหมุนเข้า', 0.8, zoomSpinIn],
+  ['strobe', 'กะพริบเข้า', 0.8, strobeIn],
+  ['heartbeat', 'หัวใจเต้นเข้า', 1, heartbeatIn],
+  ['stepped-wipe', 'กวาดเป็นจังหวะ', 0.8, steppedWipe],
+  ['iris-corner', 'วงกลมจากมุม', 1, irisCorner],
+  ['clock', 'หมุนเข็มนาฬิกา', 1, clockIn],
+  ['barn-door', 'เปิดประตูบนล่าง', 0.8, barnDoor],
+  ['box', 'กล่องขยาย', 0.8, boxIn],
+  ['checker', 'ตารางผุด', 1, checkerIn],
+  ['halves', 'สองซีกประกบ', 0.8, halvesIn],
+  ['quad', 'สี่มุมประกบ', 1, quadIn],
+  ['earthquake', 'แผ่นดินไหว', 1, earthquakeIn],
+  ['vertigo', 'เวียนหัว', 1, vertigoIn],
+  ['from-black', 'จากความมืด', 0.8, fromBlack],
+  ['overexpose', 'สว่างจ้า', 0.8, overexpose],
+  ['sepia', 'จากภาพเก่า', 1, sepiaIn],
+  ['hue', 'สีรุ้งหมุน', 1, hueIn],
+  ['saturate', 'สีสดพุ่ง', 0.8, satIn],
+  ['contrast', 'คอนทราสต์จัด', 0.8, contrastIn],
+  ['zoom-trail', 'ซูมทิ้งเงา', 0.8, zoomTrailIn],
+  ['drop-squash', 'ตกแล้วยุบ', 1, dropSquash],
+  ['rubber', 'ยางยืด', 1, rubberIn],
+  ['tada', 'ตาด้า', 1, tadaIn],
+  ['light-speed', 'ความเร็วแสง', 0.6, lightSpeed],
+  ['skew-left', 'เฉียงจากซ้าย', 0.5, skewFromLeft],
 ];
 
 // ---- exits: an entrance played backwards; p = 0 at rest, p = 1 gone ----
@@ -298,6 +424,41 @@ const OUT: Entry[] = [
   ['fly-away', 'พุ่งทะลุจอ', 1, flyAway],
   ['split', 'แยกร่างหาย', 0.8, back(splitIn)],
   ['skew', 'เฉียงออก', 0.5, back(skewIn)],
+  ['elastic-left', 'สปริงออกซ้าย', 1, back(elasticFrom('left'))],
+  ['elastic-right', 'สปริงออกขวา', 1, back(elasticFrom('right'))],
+  ['overshoot-up', 'ถอยแล้วพุ่งขึ้น', 0.6, back(overshootFrom('up'))],
+  ['overshoot-down', 'ถอยแล้วพุ่งลง', 0.6, back(overshootFrom('down'))],
+  ['overshoot-left', 'ถอยแล้วพุ่งซ้าย', 0.6, back(overshootFrom('left'))],
+  ['overshoot-right', 'ถอยแล้วพุ่งขวา', 0.6, back(overshootFrom('right'))],
+  ['corner-tl', 'สไลด์ออกมุมซ้ายบน', 0.6, back(slideFrom('up-left'))],
+  ['corner-tr', 'สไลด์ออกมุมขวาบน', 0.6, back(slideFrom('up-right'))],
+  ['corner-bl', 'สไลด์ออกมุมซ้ายล่าง', 0.6, back(slideFrom('down-left'))],
+  ['corner-br', 'สไลด์ออกมุมขวาล่าง', 0.6, back(slideFrom('down-right'))],
+  ['flip-x', 'ตีลังกาออก', 0.6, back(flipXIn)],
+  ['zoom-spin', 'ซูมหมุนหาย', 0.8, back(zoomSpinIn)],
+  ['strobe', 'กะพริบหาย', 0.8, back(strobeIn)],
+  ['heartbeat', 'หัวใจเต้นหาย', 1, back(heartbeatIn)],
+  ['stepped-wipe', 'กวาดหายเป็นจังหวะ', 0.8, back(steppedWipe)],
+  ['iris-corner', 'วงกลมหดเข้ามุม', 1, back(irisCorner)],
+  ['clock', 'เข็มนาฬิกาปิด', 1, back(clockIn)],
+  ['barn-door', 'ปิดประตูบนล่าง', 0.8, back(barnDoor)],
+  ['box', 'กล่องหด', 0.8, back(boxIn)],
+  ['checker', 'ตารางหาย', 1, back(checkerIn)],
+  ['halves', 'สองซีกแยก', 0.8, back(halvesIn)],
+  ['quad', 'สี่มุมแตก', 1, back(quadIn)],
+  ['earthquake', 'แผ่นดินไหวหาย', 1, back(earthquakeIn)],
+  ['vertigo', 'เวียนหัวหาย', 1, back(vertigoIn)],
+  ['to-black', 'มืดลง', 0.8, back(fromBlack)],
+  ['overexpose', 'สว่างจ้าหาย', 0.8, back(overexpose)],
+  ['sepia', 'กลายเป็นภาพเก่า', 1, back(sepiaIn)],
+  ['hue', 'สีรุ้งหมุนหาย', 1, back(hueIn)],
+  ['saturate', 'สีสดจัดหาย', 0.8, back(satIn)],
+  ['contrast', 'คอนทราสต์จัดหาย', 0.8, back(contrastIn)],
+  ['zoom-trail', 'ซูมทิ้งเงาหาย', 0.8, back(zoomTrailIn)],
+  ['sink', 'จมลง', 0.8, sinkOut],
+  ['rubber', 'ยางยืดหาย', 1, back(rubberIn)],
+  ['light-speed', 'ความเร็วแสงออก', 0.6, back(lightSpeed)],
+  ['skew-left', 'เฉียงออกซ้าย', 0.5, back(skewFromLeft)],
 ];
 
 // ---- combos: one motion across the clip, p = 0..1 over its duration ----
@@ -355,6 +516,9 @@ const cube: Fn = (p) => {
   const t = ease.inOutCubic(p) * (PI / 2);
   return { copies: [{ sx: Math.max(0.001, cos(t)), dx: -0.5 * (1 - cos(t)) }, { sx: Math.max(0.001, sin(t)), dx: 0.5 * cos(t) }] };
 };
+
+// 0 -> 1 -> 0 over each whole unit of p
+const tri = (p: number) => 1 - Math.abs((((p % 1) + 1) % 1) * 2 - 1);
 
 const COMBO: Entry[] = [
   ['zoom-in-out', 'ซูมเข้า-ออก', 2, inOut(zoomFrom(0.5), back(zoomFrom(0.5)))],
@@ -433,6 +597,74 @@ const COMBO: Entry[] = [
   ['thirds', 'แยกสามส่วน', 2, thirds],
   ['halves', 'แยกกลางจอ', 2, halves(false)],
   ['halves-v', 'แยกบนล่าง', 2, halves(true)],
+  ['heartbeat', 'หัวใจเต้น', 2, (p) => {
+    const b = (p * 4) % 1;
+    return { scale: 1 + 0.12 * Math.exp(-(((b - 0.15) / 0.07) ** 2)) + 0.08 * Math.exp(-(((b - 0.45) / 0.07) ** 2)) };
+  }],
+  ['breathe', 'หายใจ', 3, (p) => ({ scale: 1 + 0.06 * sin(p * PI * 2) ** 2 })],
+  ['float', 'ลอยตัว', 3, (p) => ({ y: 0.03 * sin(p * PI * 4), rot: 1.5 * sin(p * PI * 2) })],
+  ['strobe', 'แสงกะพริบ', 2, (p) => ({ alpha: Math.floor(p * 16) % 2 ? 0.35 : 1 })],
+  ['hue-cycle', 'สีรุ้งวน', 3, (p) => ({ hue: 360 * p, sat: 1.4 })],
+  ['sepia-flash', 'ภาพเก่าแวบ', 2, (p) => ({ sepia: Math.max(0, sin(p * PI * 4)), contrast: 1 + 0.2 * Math.max(0, sin(p * PI * 4)) })],
+  ['earthquake', 'แผ่นดินไหว', 2, (p) => {
+    const n = Math.floor(p * 40);
+    return { x: noise(n) * 0.03, y: noise(n + 77) * 0.03, rot: noise(n + 13) * 2 };
+  }],
+  ['jitter', 'สั่นระริก', 2, (p) => {
+    const n = Math.floor(p * 60);
+    return { x: noise(n) * 0.008, y: noise(n + 3) * 0.008 };
+  }],
+  ['vertigo', 'เวียนหัว', 3, (p) => ({ rot: 6 * sin(p * PI * 4), scale: 1.1 + 0.08 * sin(p * PI * 2) })],
+  ['spiral', 'เกลียวหมุน', 3, (p) => {
+    const r = 0.35 * (1 - sin(p * PI));
+    const a = p * PI * 6;
+    return { x: r * cos(a), y: r * sin(a), scale: lerp(0.3, 1, sin(p * PI)), rot: 360 * p };
+  }],
+  ['zoom-trail', 'ซูมเงาซ้อน', 2, (p) => {
+    const k = sin(p * PI);
+    return { copies: [3, 2, 1, 0].map((i) => ({ scale: 1 + i * 0.1 * k, alpha: i ? 0.25 / i : 1 })) };
+  }],
+  ['four-corners', 'สี่มุมมาประกบ', 3, inOut(quadIn, back(quadIn))],
+  ['split-slide', 'สองซีกสวนกัน', 2, (p) => {
+    const k = sin(p * PI) * 0.35;
+    return {
+      copies: [
+        { dx: -k, reveal: { kind: 'rect', x0: -0.5, y0: -0.5, x1: 0.5, y1: 0 } },
+        { dx: k, reveal: { kind: 'rect', x0: -0.5, y0: 0, x1: 0.5, y1: 0.5 } },
+      ],
+    };
+  }],
+  ['dvd', 'เด้งรอบจอ', 4, (p) => ({ scale: 0.45, x: (tri(p * 3) - 0.5) * 0.55, y: (tri(p * 2.3 + 0.25) - 0.5) * 0.55 })],
+  ['pendulum', 'ลูกตุ้มแกว่ง', 2, (p) => ({ py: -0.5, rot: 20 * sin(p * PI * 4) })],
+  ['rubber-band', 'ยางยืดเด้ง', 2, (p) => {
+    const w = 0.2 * sin(p * PI * 6) * Math.exp(-2 * p);
+    return { sx: 1 + w, sy: 1 - w };
+  }],
+  ['tada', 'ตาด้า', 2, (p) => {
+    const b = (p * 2) % 1;
+    return b < 0.5 ? { scale: 1 + 0.08 * sin(b * 2 * PI), rot: 4 * sin(b * PI * 8) } : {};
+  }],
+  ['head-shake', 'ส่ายหน้า', 2, (p) => ({ x: 0.05 * sin(p * PI * 8) * sin(p * PI), rot: 4 * sin(p * PI * 8) * sin(p * PI) })],
+  ['jello', 'เจลลี่บิด', 2, (p) => ({ skew: 18 * sin(p * PI * 6) * (1 - p), sy: 1 + 0.05 * sin(p * PI * 6) })],
+  ['flip-flop', 'พลิกไปมา', 2, (p) => ({ sx: cos(p * PI * 4) })],
+  ['tumble', 'กลิ้ง', 3, (p) => ({ x: lerp(-0.9, 0.9, p), rot: 720 * p, scale: 0.6, alpha: edges(p) })],
+  ['domino', 'โดมิโนล้ม', 2, (p) => (p < 0.6 ? {} : { px: 0.5, py: 0.5, rot: 90 * ease.inCubic((p - 0.6) / 0.4) })],
+  ['page-turn', 'เปิดหน้ากระดาษ', 2, (p) =>
+    p < 0.6 ? {} : { px: -0.5, sx: Math.max(0.001, 1 - ease.inOutQuad((p - 0.6) / 0.4)), bright: lerp(1, 0.6, (p - 0.6) / 0.4) }],
+  ['iris', 'ม่านวงกลม', 2, (p) => ({ reveal: { kind: 'circle', r: clamp01(sin(p * PI) * 1.4) } })],
+  ['clock', 'นาฬิกาเปิดปิด', 2, (p) => ({ reveal: { kind: 'clock', deg: 360 * clamp01(sin(p * PI) * 1.3) } })],
+  ['checker', 'ตารางผุดหาย', 2, (p) => ({ reveal: { kind: 'grid', n: 6, amount: clamp01(sin(p * PI) * 1.3) } })],
+  ['glow', 'เรืองแสง', 2, (p) => ({ bright: 1 + 0.4 * sin(p * PI * 2) ** 2, sat: 1.2 })],
+  ['contrast-beat', 'คอนทราสต์ตามจังหวะ', 2, (p) => ({ contrast: 1 + 0.6 * Math.max(0, sin(p * PI * 8)) })],
+  ['ghost', 'ภาพหลอน', 2, (p) => {
+    const k = 0.05 + 0.04 * sin(p * PI * 6);
+    return { copies: [{ dx: -k, alpha: 0.35 }, { dx: k, alpha: 0.35 }, {}] };
+  }],
+  ['beat-zoom', 'ซูมตามบีท', 2, (p) => ({ scale: 1 + 0.15 * Math.exp(-((p * 4) % 1) / 0.12) })],
+  ['zoom-shake', 'ซูมสั่น', 2, (p) => {
+    const n = Math.floor(p * 30);
+    return { scale: 1.15, x: noise(n) * 0.02, y: noise(n + 9) * 0.02 };
+  }],
 ];
 
 const build = (slot: Slot, entries: Entry[]): Preset[] => entries.map(([id, name, seconds, pose]) => ({ id: `${slot}:${id}`, slot, name, seconds, pose }));

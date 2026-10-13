@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button, DraftCard, TopBar } from '../ui';
 import { createProject, listProjects } from '../store';
-import { ImportError, deleteProjectMedia, importVideo } from '../media';
-import { formatTime, newProject, projectDuration } from '../timeline.ts';
+import { ImportError, deleteProjectMedia, importMedia } from '../media';
+import { addMedia, formatTime, newProject, projectDuration } from '../timeline.ts';
 import type { Project } from '../schema';
 
 const importMessages: Record<ImportError['code'], string> = {
-  'unsupported-format': 'เปิดไฟล์นี้ไม่ได้ ลองใช้ไฟล์ MP4, MOV หรือ WebM',
+  'unsupported-format': 'เปิดไฟล์นี้ไม่ได้ ลองใช้ไฟล์ MP4, MOV, WebM, JPG, PNG หรือ MP3',
   'no-video': 'ไฟล์นี้ไม่มีภาพวิดีโอ',
-  'unsupported-codec': 'เครื่องนี้เล่นวิดีโอไฟล์นี้ไม่ได้',
+  'no-audio': 'ไฟล์นี้ไม่มีเสียง',
+  'unsupported-codec': 'เครื่องนี้เล่นไฟล์นี้ไม่ได้',
+  'bad-image': 'เปิดรูปนี้ไม่ได้',
 };
 
-function importMessage(e: unknown) {
+export function importMessage(e: unknown) {
   if (e instanceof ImportError) return importMessages[e.code];
   if (e instanceof DOMException && e.name === 'QuotaExceededError') return 'พื้นที่ในเครื่องไม่พอสำหรับวิดีโอนี้';
   return `นำเข้าไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`;
@@ -28,15 +30,18 @@ export function Home() {
     listProjects().then(setProjects, (e) => setError(`โหลดโปรเจกต์ไม่สำเร็จ (${e})`));
   }, []);
 
-  async function onPick(file: File | undefined) {
-    if (!file) return;
+  async function onPick(files: File[]) {
+    if (files.length === 0) return;
     setBusy(true);
     setError('');
     const id = crypto.randomUUID();
     try {
       void navigator.storage.persist();
-      const asset = await importVideo(id, file);
-      await createProject(newProject(id, file.name.replace(/\.[^.]+$/, ''), asset, new Date().toISOString()));
+      const assets = [];
+      for (const file of files) assets.push(await importMedia(id, file));
+      const p = newProject(id, files[0].name.replace(/\.[^.]+$/, ''), assets[0], new Date().toISOString());
+      addMedia(p, assets.slice(1));
+      await createProject(p);
       location.hash = `#/edit/${id}`;
     } catch (e) {
       await deleteProjectMedia(id);
@@ -53,15 +58,16 @@ export function Home() {
       <main className="flex flex-1 flex-col gap-6 px-4 pb-8">
         <Button loading={busy} onClick={() => picker.current?.click()}>
           {!busy && <Plus size={20} aria-hidden />}
-          {busy ? 'กำลังนำเข้าวิดีโอ…' : 'โปรเจกต์ใหม่'}
+          {busy ? 'กำลังนำเข้า…' : 'โปรเจกต์ใหม่'}
         </Button>
         <input
           ref={picker}
           type="file"
-          accept="video/*"
+          accept="video/*,image/*"
+          multiple
           hidden
-          aria-label="เลือกวิดีโอ"
-          onChange={(e) => void onPick(e.target.files?.[0])}
+          aria-label="เลือกวิดีโอหรือรูป"
+          onChange={(e) => void onPick([...(e.target.files ?? [])])}
         />
         {error && (
           <p role="alert" className="text-sm text-danger">
@@ -74,7 +80,7 @@ export function Home() {
             <div className="aspect-video animate-pulse rounded-md bg-raised" />
           </div>
         ) : projects.length === 0 ? (
-          <p className="py-12 text-center text-sm text-muted">ยังไม่มีโปรเจกต์ กด “โปรเจกต์ใหม่” แล้วเลือกวิดีโอในเครื่องได้เลย</p>
+          <p className="py-12 text-center text-sm text-muted">ยังไม่มีโปรเจกต์ กด “โปรเจกต์ใหม่” แล้วเลือกวิดีโอหรือรูปในเครื่องได้เลย</p>
         ) : (
           <ul className="grid grid-cols-2 gap-4">
             {projects.map((p) => (

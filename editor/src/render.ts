@@ -19,9 +19,24 @@ function clipTo(ctx: Ctx, r: Reveal, w: number, h: number) {
     case 'rect':
       ctx.rect(r.x0 * w, r.y0 * h, (r.x1 - r.x0) * w, (r.y1 - r.y0) * h);
       break;
-    case 'circle':
-      ctx.arc(0, 0, (r.r * Math.hypot(w, h)) / 2, 0, Math.PI * 2);
+    case 'circle': {
+      const cx = r.cx ?? 0;
+      const cy = r.cy ?? 0;
+      ctx.arc(cx * w, cy * h, r.r * Math.hypot(w * (0.5 + Math.abs(cx)), h * (0.5 + Math.abs(cy))), 0, Math.PI * 2);
       break;
+    }
+    case 'clock':
+      ctx.moveTo(0, 0);
+      ctx.arc(0, 0, Math.hypot(w, h), -Math.PI / 2, -Math.PI / 2 + (r.deg * Math.PI) / 180);
+      ctx.closePath();
+      break;
+    case 'grid': {
+      const cw = w / r.n;
+      const ch = h / r.n;
+      for (let i = 0; i < r.n; i++)
+        for (let j = 0; j < r.n; j++) ctx.rect(-w / 2 + (i + 0.5 - r.amount / 2) * cw, -h / 2 + (j + 0.5 - r.amount / 2) * ch, cw * r.amount, ch * r.amount);
+      break;
+    }
     case 'blinds':
       for (let i = 0; i < r.n; i++) {
         if (r.vertical) ctx.rect(-w / 2 + (i * w) / r.n, -h / 2, (w / r.n) * r.amount, h);
@@ -83,6 +98,10 @@ export function drawClip(ctx: Ctx, img: CanvasImageSource, srcW: number, srcH: n
     pose.gray > 0 && `grayscale(${pose.gray})`,
     pose.bright !== 1 && `brightness(${pose.bright})`,
     pose.invert > 0 && `invert(${pose.invert})`,
+    pose.hue !== 0 && `hue-rotate(${pose.hue.toFixed(1)}deg)`,
+    pose.sat !== 1 && `saturate(${pose.sat})`,
+    pose.sepia > 0 && `sepia(${pose.sepia})`,
+    pose.contrast !== 1 && `contrast(${pose.contrast})`,
   ].filter(Boolean);
   const draws: Copy[] = pose.copies ?? [{}];
   for (const c of draws) {

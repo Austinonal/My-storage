@@ -2,6 +2,22 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — timeline: photos, audio, move, split, delete; more animations (parity 27.9, must-haves 12 of 34)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| S03 Editor + timeline | partial | pinch zoom, trim handles on the timeline, thumbnails/waveforms on clips, overlay track | scrubbing during a playing preview was yanked back by the playhead auto-follow; fixed by pausing on any touch/wheel on the timeline and on seek |
+| S04 Clip tools | partial | speed, reverse, crop, freeze, replace | tool sheets were modal, so undo/play/timeline were dead while trimming; made them non-modal panels |
+| S07/S08 Audio | partial | fades, voiceover recording, voice effects, beats | none |
+| S24 Clip animations | done | art/particle presets | none |
+
+- Main track holds videos and photos (photos default 3 s, 0.5-20 s); the audio track(s) hold music or the sound of any video (= extract audio). Overlapping audio opens a new track.
+- Move: select a clip, then drag it (audio moves in time, main clips reorder), or use the arrow keys (audio ±0.1 s, Shift ±1 s; main clips one place). Split at the playhead, delete, volume 0-200 %.
+- Player: one clock drives every clip's media element with drift correction; the canvas is drawn by the same compositor as the export.
+- Export: photos rendered per frame; audio from main-track videos and audio tracks mixed at their start times; the video ends with the main track.
+- Animations: 287 presets (100 In / 86 Out / 101 Combo), new effects (hue, saturation, sepia, contrast) and reveals (clock, checkerboard, circle from a corner).
+- Checked: 20 unit tests; three e2e runs in Chromium (slice, animations, timeline) with zero console errors; the timeline export verified with ffprobe: 5.0 s, photo at 1.5 s, video at 4 s, silence before the music, music from its dragged start at 2.5 s, music + video sound mixed after 3 s.
+
 ## 2026-10-13 — CI: APK + web on GitHub
 
 - `.github/workflows/editor.yml`, on every push to the default branch: tests + build (`web`), deploy `editor/dist` to GitHub Pages (`pages`), and a Capacitor debug APK (`android`) attached to the rolling `editor-latest` release.

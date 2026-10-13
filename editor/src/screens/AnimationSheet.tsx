@@ -71,7 +71,7 @@ export function AnimationSheet({
   const min = Math.min(0.1 * SEC, max); // on the slider's 0.1 s grid, or every value snaps off by a fraction
 
   return (
-    <BottomSheet open={open} title="แอนิเมชัน" onClose={onClose} dim={false}>
+    <BottomSheet open={open} title="แอนิเมชัน" onClose={onClose} modal={false}>
       <div className="sticky top-0 z-10 flex flex-col gap-2 bg-surface pb-3">
         <CategoryTabs items={TABS.map(([, label]) => label)} value={TABS.find(([s]) => s === slot)![1]} onChange={(label) => setSlot(TABS.find(([, l]) => l === label)![0])} />
         {slot === 'combo' && <p className="text-xs text-muted">คอมโบเล่นตลอดคลิป และจะแทนที่ภาพเคลื่อนไหวแบบเข้า/ออก</p>}

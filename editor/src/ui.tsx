@@ -75,29 +75,35 @@ export function BottomSheet({
   open,
   title,
   onClose,
-  dim = true,
+  modal = true,
   children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
-  dim?: boolean; // false keeps the preview behind the sheet fully visible
+  modal?: boolean; // false: a tool panel; the preview, timeline and undo behind it stay usable
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   useEffect(() => {
     const d = ref.current!;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      if (modal) d.showModal();
+      else d.show();
+    }
     if (!open && d.open) d.close();
-  }, [open]);
+  }, [open, modal]);
   return (
     <dialog
       ref={ref}
       aria-labelledby={titleId}
       onClose={onClose}
+      onKeyDown={(e) => !modal && e.key === 'Escape' && onClose()}
       onClick={(e) => e.target === e.currentTarget && onClose()} // tap on the backdrop closes
-      className={`mx-auto mt-auto mb-0 max-h-(--size-sheet-max) w-full max-w-(--size-sheet-width) flex-col rounded-t-lg bg-surface p-0 text-fg shadow-sheet open:flex ${dim ? 'backdrop:bg-scrim/50' : 'backdrop:bg-transparent'}`}
+      className={`mx-auto mt-auto mb-0 max-h-(--size-sheet-max) w-full max-w-(--size-sheet-width) flex-col rounded-t-lg bg-surface p-0 text-fg shadow-sheet open:flex ${
+        modal ? 'backdrop:bg-scrim/50' : 'fixed inset-x-0 top-auto bottom-0 z-30'
+      }`}
     >
       <div className="flex h-12 shrink-0 items-center justify-between pl-4">
         <h2 id={titleId} className="text-base font-semibold">
