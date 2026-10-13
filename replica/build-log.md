@@ -2,6 +2,28 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — smart tools: beats, silences, auto captions, cutout, tracking, reframe, effect layers (parity 83.9, must-haves 33 of 34)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| Beat sync | done | manual beat marks | an analysis step of 10 ms is a whole number of samples (221 at 22.05 kHz), not 10 ms: times drifted 23 ms by 10 s until they used the real step |
+| Remove silences | done | curves / reversed clips | none |
+| Auto captions | done | Thai accuracy unmeasured (no Thai speech here); English and Thai only in the picker | the model hub and the CDN are blocked in this sandbox: the test answers the hub's URLs from a local copy of the same files; the ONNX runtime now ships with the app |
+| Person cutout | done | exports that use it render on the main thread | the export worker cannot load MediaPipe's classic loader; projects that need it skip the worker |
+| Text behind person | done | none | none |
+| Tracking | done | size and turn are not followed | none |
+| Auto reframe | done | quarter-turned clips stay centred | none |
+| Effect layers | done | blur, shake and zoom effects | none |
+
+- **ตัดตามบีท** (on a music clip): finds the beats on the device (24 beats at 120 BPM on the test loop), shows them as yellow dots on the clip, clips and edges snap to them; "วางคลิปให้เปลี่ยนตรงบีท" re-times the main track so every cut lands on every 1, 2 or 4 beats (checked: cuts at 0.73 s, 1.73 s, 2.73 s, 3.73 s).
+- **ลบช่วงเงียบ** (on a main-track video): pauses over 0.35 s go, 0.1 s kept around the words (checked: three pauses cut, 2.6 s shorter, exactly where the test clip was quiet).
+- **ซับอัตโนมัติ** (in คำบรรยาย): Whisper base in a worker; the model (about 80 MB) downloads once and stays cached; Thai or English; long stretches are split between words with the browser's Thai word breaker.
+- **ตัดพื้นหลัง** (on a video, photo or overlay): remove, blur or swap the background for a photo; **ไว้หลังคน** (text position tab) puts text behind the person.
+- **ติดตาม** (on a text or overlay): tap a spot on the preview; it follows from the playhead to the end of the clip and becomes position keyframes (checked: +0.49 of the frame in 2.4 s on a clip panning 0.195 frames per second).
+- **จัดเฟรมอัตโนมัติตามตัวคน** (in อัตราส่วน): wide clips fill a narrower frame and slide to keep the person in the middle.
+- **เอฟเฟกต์** (main toolbar): VHS, glitch, light leak, film dust and scan lines as clips on their own track, over everything below while they run.
+- Checked: 68 unit tests; new e2e suites for effects, beats + silences, cutout + text behind, tracking + reframe, auto captions; the earlier suites (reverse, transitions, voiceover, overlays, text, captions, quality, colour, templates) still pass with zero errors. Screens: S28–S32 in `clone-screens/`.
+
 ## 2026-10-13 — the basics every editor has (parity 80.4, must-haves 33 of 34)
 
 | ID | status | missing | harder than expected |

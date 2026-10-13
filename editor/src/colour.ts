@@ -116,25 +116,7 @@ function setup() {
     broken = true; // shortcut: without WebGL2 clips play ungraded; every phone this app targets (Android 8+, Chrome) has it
     return null;
   }
-  const shader = (type: number, code: string) => {
-    const s = gl.createShader(type)!;
-    gl.shaderSource(s, code);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
-    return s;
-  };
-  const prog = gl.createProgram()!;
-  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FRAG));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) ?? 'link');
-  gl.useProgram(prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const pos = gl.getAttribLocation(prog, 'pos');
-  gl.enableVertexAttribArray(pos);
-  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
-  const u = Object.fromEntries(UNIFORMS.map((n) => [n, gl.getUniformLocation(prog, n)]));
+  const u = fullFrame(gl, FRAG, UNIFORMS);
   gl.uniform1i(u.img, 0);
   gl.uniform1i(u.lut, 1);
   gl.uniform1i(u.curve, 2);
@@ -157,6 +139,29 @@ function setup() {
   }
   ready = { gl, canvas, u, src, curve };
   return ready;
+}
+
+// A program that draws one full-frame quad with `frag` (which reads `uv`, 0,0 = top left); returns its uniform locations.
+export function fullFrame(gl: WebGL2RenderingContext, frag: string, uniforms: string[]) {
+  const shader = (type: number, code: string) => {
+    const s = gl.createShader(type)!;
+    gl.shaderSource(s, code);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) ?? 'shader');
+    return s;
+  };
+  const prog = gl.createProgram()!;
+  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) ?? 'link');
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const pos = gl.getAttribLocation(prog, 'pos');
+  gl.enableVertexAttribArray(pos);
+  gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0);
+  return Object.fromEntries(uniforms.map((n) => [n, gl.getUniformLocation(prog, n)]));
 }
 
 function lutTexture(gl: WebGL2RenderingContext, lut: Lut) {

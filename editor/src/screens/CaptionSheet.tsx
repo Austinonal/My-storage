@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
-import { FileUp, Plus, Trash2 } from 'lucide-react';
+import { AudioLines, FileUp, Plus, Trash2 } from 'lucide-react';
 import { BottomSheet, Button, Slider } from '../ui';
 import { edit } from '../store';
 import { linesToCaptions, parseSubtitles } from '../captions';
+import { transcribe } from '../speech';
+import { importMessage } from './Home';
 import { SEC, addCaptions, deleteClip, formatTime, updateText } from '../timeline.ts';
 import type { Project, TextClip, Us } from '../schema';
 
@@ -26,6 +28,9 @@ export function CaptionSheet({
   const [seconds, setSeconds] = useState(2);
   const [message, setMessage] = useState('');
   const file = useRef<HTMLInputElement>(null);
+  const [language, setLanguage] = useState('thai');
+  const [hearing, setHearing] = useState<string | null>(null);
+  const stop = useRef<AbortController | null>(null);
   const captions = (project.tracks.flatMap((t) => t.clips).filter((c) => c.kind === 'text') as TextClip[]).sort((a, b) => a.start - b.start);
   const like = captions.at(-1);
 
@@ -35,6 +40,21 @@ export function CaptionSheet({
       addCaptions(d, caps, like);
     });
     setMessage(`เพิ่มคำบรรยาย ${caps.length} รายการ`);
+  }
+
+  async function fromSpeech() {
+    setMessage('');
+    setHearing('กำลังเตรียมเสียง…');
+    stop.current = new AbortController();
+    try {
+      const caps = await transcribe(project, language, (s) => setHearing(s.listening ? 'กำลังถอดเสียงเป็นข้อความ… (ใช้เวลาพอๆ กับความยาวคลิปหรือนานกว่าในเครื่องรุ่นเก่า)' : `กำลังโหลดโมเดลถอดเสียง ${Math.round((s.download ?? 0) * 100)}%`), stop.current.signal);
+      make(caps, 'เสียงพูดในคลิป');
+    } catch (e) {
+      if (!stop.current?.signal.aborted) setMessage(`ถอดเสียงไม่สำเร็จ: ${importMessage(e)}`);
+    } finally {
+      setHearing(null);
+      stop.current = null;
+    }
   }
 
   async function fromFile(f: File | undefined) {
@@ -56,6 +76,29 @@ export function CaptionSheet({
           <Button variant="secondary" size="md" onClick={() => file.current?.click()}>
             <FileUp size={16} aria-hidden /> นำเข้า .srt / .vtt
           </Button>
+        </div>
+
+        <div className="flex flex-col gap-2 rounded-md bg-raised p-3">
+          <span className="text-sm">ซับอัตโนมัติจากเสียงพูด</span>
+          <div role="radiogroup" aria-label="ภาษาที่พูดในคลิป" className="flex gap-1">
+            {[['thai', 'ไทย'], ['english', 'อังกฤษ']].map(([id, label]) => (
+              <button key={id} role="radio" aria-checked={language === id} disabled={!!hearing} onClick={() => setLanguage(id)} className={`h-9 flex-1 rounded-md text-sm ${language === id ? 'bg-accent text-on-accent' : 'bg-bg'} focus-visible:outline-2 focus-visible:outline-accent`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {hearing ? (
+            <Button variant="secondary" onClick={() => stop.current?.abort()}>
+              หยุด
+            </Button>
+          ) : (
+            <Button onClick={() => void fromSpeech()}>
+              <AudioLines size={16} aria-hidden /> สร้างซับจากเสียงพูด
+            </Button>
+          )}
+          <p role="status" className="text-xs text-muted">
+            {hearing ?? 'ถอดเสียงบนเครื่องด้วย Whisper · ครั้งแรกต้องต่อเน็ตเพื่อโหลดโมเดลประมาณ 80 MB แล้วใช้ออฟไลน์ได้ · ฟังเสียงทั้งหมดในโปรเจกต์ เพลงดังๆ อาจทำให้ฟังผิด'}
+          </p>
         </div>
 
         {captions.length === 0 ? (

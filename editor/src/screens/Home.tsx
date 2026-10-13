@@ -25,7 +25,7 @@ function Cover({ p }: { p: Project }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     const first = p.tracks[0].clips[0];
-    const asset = first && first.kind !== 'text' ? p.assets[first.assetId] : undefined;
+    const asset = first && (first.kind === 'video' || first.kind === 'photo') ? p.assets[first.assetId] : undefined;
     let live = true;
     if (asset) void coverOf(asset).then((u) => live && setUrl(u));
     return () => {

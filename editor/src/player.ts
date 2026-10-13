@@ -6,6 +6,7 @@ import { voiceChain, type Chain } from './voice';
 import type { Voice } from './schema';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
+import { preparePerson } from './segment';
 import { FRAME_NUDGE, SEC, projectDuration } from './timeline.ts';
 
 // Plays a project in a canvas: one clock, every media element follows it and is corrected when it drifts.
@@ -60,6 +61,7 @@ export class Player {
     }
     this.time = Math.min(this.time, projectDuration(p));
     void prepareLuts(p).then(() => this.draw());
+    preparePerson(p).then(() => this.draw(), (e) => this.onError?.(e));
     void this.load(p);
     this.sync();
     this.draw();

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, Captions, Crop, Diamond, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, Volume2, WandSparkles } from 'lucide-react';
+import { ArrowLeft, AudioLines, Captions, Crop, Diamond, Drum, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, UserRound, Volume2, WandSparkles, Zap, Crosshair, ScanFace } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, Swatches, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia, storeMedia } from '../media';
@@ -20,6 +20,7 @@ import {
   projectDuration,
   replaceClip,
   insertFreeze,
+  keepParts,
   setAdjust,
   setKeyEasing,
   setReversed,
@@ -28,6 +29,10 @@ import {
   toggleKeyframe,
   setAspect,
   setCanvas,
+  setCutout,
+  setFollow,
+  setReframe,
+  outputSize,
   setFilter,
   setGrade,
   setMatch,
@@ -46,12 +51,15 @@ import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
 import { CaptionSheet } from './CaptionSheet';
 import { QualitySheet } from './QualitySheet';
-import { CropSheet, SoundSheet, SpeedSheet, TransitionSheet, VoiceoverSheet } from './ClipTools';
+import { BeatSheet, CropSheet, CutoutSheet, EffectSheet, SoundSheet, SpeedSheet, TransitionSheet, VoiceoverSheet } from './ClipTools';
+import { monoOf } from '../thumbs';
+import { speechRanges } from '../sound.ts';
+import { personPath, trackSpot } from '../follow';
 import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, Easing, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'sound' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | 'speed' | 'crop' | 'transition' | 'voiceover' | null;
+type Sheet = 'anim' | 'trim' | 'sound' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | 'speed' | 'crop' | 'transition' | 'voiceover' | 'effect' | 'beat' | 'cutout' | 'track' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -108,6 +116,7 @@ export function Editor({ id }: { id: string }) {
   const audioInput = useRef<HTMLInputElement>(null);
   const overlayInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
+  const backgroundInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setStatus('loading');
@@ -232,6 +241,22 @@ export function Editor({ id }: { id: string }) {
     }
   }
 
+  // A new background behind the cut-out person: a photo, stored with the project.
+  async function setBackground(file: File | undefined) {
+    if (!p || !visual || !file) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      const asset = await importMedia(p.id, file);
+      if (asset.kind !== 'photo') return setNotice('พื้นหลังใหม่ต้องเป็นรูปนิ่ง');
+      edit((d) => setCutout(d, visual.id, { bg: 'image' }, asset));
+    } catch (e) {
+      setNotice(importMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function split() {
     if (!sel) return;
     let right: string | null = null;
@@ -294,6 +319,7 @@ export function Editor({ id }: { id: string }) {
   function onPreviewDown(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!p) return;
     const pt = canvasPoint(e);
+    if (sheet === 'track' && (textSel || overlaySel)) return void track(pt, e.currentTarget);
     e.currentTarget.setPointerCapture(e.pointerId);
     pointers.current.set(e.pointerId, pt);
     if (playerRef.current?.playing) playerRef.current.pause();
@@ -434,6 +460,78 @@ export function Editor({ id }: { id: string }) {
     }
   }
 
+  // Talking clips: the quiet stretches between sentences are cut out in one go (undo brings them back).
+  async function removeSilence() {
+    if (!p || !mainSel || mainSel.kind !== 'video') return;
+    if (mainSel.curve || mainSel.reversed) return setNotice('ลบช่วงเงียบใช้กับคลิปที่ไม่ได้ใส่กราฟความเร็วหรือเล่นถอยหลัง');
+    const c = mainSel;
+    setBusy(true);
+    setBusyText('กำลังฟังหาช่วงเงียบ…');
+    try {
+      const sound = p.assets[c.assetId].hasAudio ? await monoOf(p.assets[c.assetId], c.sourceIn / SEC, sourceOut(c) / SEC) : null;
+      if (!sound) return setNotice('คลิปนี้ไม่มีเสียงให้ฟัง');
+      const parts = speechRanges(sound.samples, sound.rate).map(([a, b]) => [Math.round((a * SEC) / c.speed), Math.round((b * SEC) / c.speed)] as [number, number]);
+      const cut = (c.duration - parts.reduce((n, [a, b]) => n + Math.min(b, c.duration) - a, 0)) / SEC;
+      let removed = 0;
+      edit((d) => {
+        removed = keepParts(d, c.id, parts);
+      });
+      setNotice(removed ? `ตัดช่วงเงียบออก ${removed} ช่วง (สั้นลง ${cut.toFixed(1)} วิ)` : 'ไม่พบช่วงเงียบที่ยาวพอจะตัด');
+    } catch (e) {
+      setNotice(`ฟังเสียงไม่สำเร็จ: ${importMessage(e)}`);
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  }
+
+  // Auto reframe: every main clip wider than the frame zooms to fill it and slides to keep the person in the middle.
+  async function reframeAll() {
+    if (!p) return;
+    const [W, H] = outputSize(p.aspect, 1080);
+    const wide = (p.tracks[0].clips as MediaClip[]).filter((c) => {
+      const a = p.assets[c.assetId];
+      return !a.placeholder && (a.width * c.crop.w) / (a.height * c.crop.h) > (W / H) * 1.02;
+    });
+    if (!wide.length) return setNotice('ไม่มีคลิปที่กว้างกว่าเฟรม เลือกอัตราส่วนที่แคบกว่าคลิปก่อน เช่น 9:16');
+    setSheet(null);
+    setBusy(true);
+    const key = `reframe-${Date.now()}`; // one undo step for the whole run
+    try {
+      for (const [i, c] of wide.entries()) {
+        const path = await personPath(p, c, (f) => setBusyText(`กำลังหาตัวคน… คลิป ${i + 1}/${wide.length} · ${Math.round(f * 100)}%`), new AbortController().signal);
+        edit((d) => setReframe(d, c.id, path), key);
+      }
+      setNotice(`จัดเฟรมตามตัวคนแล้ว ${wide.length} คลิป · กดเล่นเพื่อดู`);
+    } catch (e) {
+      setNotice(`จัดเฟรมไม่สำเร็จ: ${importMessage(e)}`);
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  }
+
+  // Tracking: the selected text or overlay follows the spot tapped on the preview, from the playhead to its end.
+  async function track(pt: Point, cv: HTMLCanvasElement) {
+    const c = textSel ?? overlaySel;
+    if (!p || !c) return;
+    const from = Math.max(time, c.start);
+    const to = Math.min(c.start + c.duration, total);
+    if (to - from < SEC / 2) return setNotice('เลื่อนเส้นเวลาไปช่วงต้นของคลิปที่จะให้วิ่งตามก่อน แล้วค่อยแตะจุด');
+    setSheet(null);
+    setBusy(true);
+    try {
+      const path = await trackSpot(p, from, to, { x: pt.x / cv.width, y: pt.y / cv.height }, (f) => setBusyText(`กำลังติดตาม… ${Math.round(f * 100)}%`), new AbortController().signal);
+      edit((d) => setFollow(d, c.id, path.map((q) => ({ ...q, at: q.at - c.start }))));
+      setNotice(`ติดตามแล้ว ${((to - from) / SEC).toFixed(1)} วิ · กดเล่นเพื่อดู`);
+    } catch (e) {
+      setNotice(`ติดตามไม่สำเร็จ: ${importMessage(e)}`);
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  }
+
   // A small frame of the selected clip, for the preset tiles.
   function captureStill(w = 160) {
     const player = playerRef.current;
@@ -570,6 +668,7 @@ export function Editor({ id }: { id: string }) {
             <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
             <ToolButton icon={Captions} label="คำบรรยาย" disabled={!p || busy} active={sheet === 'captions'} onClick={() => setSheet('captions')} />
             <ToolButton icon={Layers} label="ภาพซ้อน" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
+            <ToolButton icon={Zap} label="เอฟเฟกต์" disabled={!p || busy} active={sheet === 'effect'} onClick={() => setSheet('effect')} />
             <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
           </>
         )}
@@ -577,10 +676,14 @@ export function Editor({ id }: { id: string }) {
           <>
             {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
+            {(textSel || overlaySel) && <ToolButton icon={Crosshair} label="ติดตาม" disabled={busy} active={sheet === 'track'} onClick={() => setSheet('track')} />}
+            {sel.kind === 'effect' && <ToolButton icon={Zap} label="เปลี่ยนเอฟเฟกต์" active={sheet === 'effect'} onClick={() => setSheet('effect')} />}
             {visual && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
             {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Gauge} label="ความเร็ว" active={sheet === 'speed'} onClick={() => setSheet('speed')} />}
             {visual?.kind === 'video' && <ToolButton icon={Rewind} label="ถอยหลัง" disabled={busy} active={visual.reversed} aria-pressed={visual.reversed} onClick={() => void toggleReverse()} />}
             {mainSel?.kind === 'video' && <ToolButton icon={Snowflake} label="หยุดภาพ" disabled={busy} onClick={() => void freeze()} />}
+            {mainSel?.kind === 'video' && <ToolButton icon={AudioLines} label="ลบช่วงเงียบ" disabled={busy} onClick={() => void removeSilence()} />}
+            {sel.kind === 'audio' && <ToolButton icon={Drum} label="ตัดตามบีท" active={sheet === 'beat'} onClick={() => setSheet('beat')} />}
             {visual && <ToolButton icon={Crop} label="ครอป" active={sheet === 'crop'} onClick={() => {
               captureStill(320);
               setSheet('crop');
@@ -592,6 +695,7 @@ export function Editor({ id }: { id: string }) {
               setSheet('anim');
             }} />}
             {visual && <ToolButton icon={Palette} label="ฟิลเตอร์" active={sheet === 'colour' && colourTab === 'filter'} onClick={() => openColour('filter')} />}
+            {visual && <ToolButton icon={UserRound} label="ตัดพื้นหลัง" active={sheet === 'cutout'} onClick={() => setSheet('cutout')} />}
             {visual && <ToolButton icon={Gem} label="คุณภาพ" active={sheet === 'quality'} onClick={() => setSheet('quality')} />}
             {visual && <ToolButton icon={SunMedium} label="ปรับแก้" active={sheet === 'colour' && colourTab === 'adjust'} onClick={() => openColour('adjust')} />}
             {(sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Volume2} label="เสียง" active={sheet === 'sound'} onClick={() => setSheet('sound')} />}
@@ -606,6 +710,10 @@ export function Editor({ id }: { id: string }) {
       }} />
       <input ref={replaceInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอมาแทนที่" onChange={(e) => {
         void replaceWith(e.target.files?.[0]);
+        e.target.value = '';
+      }} />
+      <input ref={backgroundInput} type="file" accept="image/*" hidden aria-label="เลือกรูปพื้นหลังใหม่" onChange={(e) => {
+        void setBackground(e.target.files?.[0]);
         e.target.value = '';
       }} />
       <input ref={overlayInput} type="file" accept="video/*,image/*" hidden aria-label="เลือกรูปหรือวิดีโอสำหรับภาพซ้อน" onChange={(e) => {
@@ -671,6 +779,9 @@ export function Editor({ id }: { id: string }) {
                 );
               })}
             </div>
+            <Button variant="secondary" disabled={busy} onClick={() => void reframeAll()}>
+              <ScanFace size={16} aria-hidden /> จัดเฟรมอัตโนมัติตามตัวคน
+            </Button>
             {p.canvas.kind === 'colour' ? (
               <Swatches label="สีพื้นหลัง" colours={['#000000', '#ffffff', '#1c1c1e', '#ff3b30', '#ffd84d', '#34c759', '#007aff', '#ff4f8b']} value={p.canvas.colour} onChange={(c) => edit((d) => setCanvas(d, { kind: 'colour', colour: c }), 'canvas-colour')} />
             ) : (
@@ -727,6 +838,26 @@ export function Editor({ id }: { id: string }) {
         />
       )}
       {p && <VoiceoverSheet open={sheet === 'voiceover'} onClose={() => setSheet(null)} onRecord={voiceover} time={time} />}
+      {p && sel?.kind === 'audio' && (
+        <BeatSheet
+          open={sheet === 'beat'}
+          onClose={() => setSheet(null)}
+          project={p}
+          clip={sel}
+          onSynced={() => {
+            player?.seek(0);
+            setNotice('วางคลิปตามบีทแล้ว กดเล่นเพื่อดู');
+          }}
+        />
+      )}
+      {p && visual && <CutoutSheet open={sheet === 'cutout'} onClose={() => setSheet(null)} clip={visual} onPickImage={() => backgroundInput.current?.click()} />}
+      {p && (textSel || overlaySel) && (
+        <BottomSheet open={sheet === 'track'} title="ติดตาม" onClose={() => setSheet(null)} modal={false}>
+          <p className="text-sm">แตะสิ่งที่ต้องการให้{textSel ? 'ข้อความ' : 'ภาพซ้อน'}วิ่งตามบนจอตัวอย่าง</p>
+          <p className="mt-1 text-xs text-muted">เริ่มจากตำแหน่งเส้นเวลาตอนนี้ไปจนจบคลิป · ได้ผลดีกับสิ่งที่มีลวดลายชัดๆ ตำแหน่งที่ได้เป็นคีย์เฟรม แก้ต่อได้</p>
+        </BottomSheet>
+      )}
+      {p && <EffectSheet open={sheet === 'effect'} onClose={() => setSheet(null)} project={p} clip={sel?.kind === 'effect' ? sel : null} time={time} onAdded={setSelectedId} />}
       {p && textSel && (
         <TextSheet
           open={sheet === 'text'}
@@ -738,8 +869,8 @@ export function Editor({ id }: { id: string }) {
         />
       )}
       {p && sel && (
-        <BottomSheet open={sheet === 'trim'} title={sel.kind === 'photo' ? 'ระยะเวลารูป' : sel.kind === 'text' ? 'ระยะเวลาข้อความ' : 'ตัดคลิป'} onClose={() => setSheet(null)} modal={false}>
-          {sel.kind === 'text' ? (
+        <BottomSheet open={sheet === 'trim'} title={sel.kind === 'photo' ? 'ระยะเวลารูป' : sel.kind === 'text' ? 'ระยะเวลาข้อความ' : sel.kind === 'effect' ? 'ระยะเวลาเอฟเฟกต์' : 'ตัดคลิป'} onClose={() => setSheet(null)} modal={false}>
+          {sel.kind === 'text' || sel.kind === 'effect' ? (
             <Slider
               label="ระยะเวลา"
               value={sel.duration / SEC}

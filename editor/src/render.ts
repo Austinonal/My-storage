@@ -5,6 +5,8 @@ import { transformAt } from './keyframes.ts';
 import { sourceAt } from './timing.ts';
 import { mergePose, transitionById } from './transitions.ts';
 import { graded } from './colour';
+import { applyEffects } from './effects';
+import { cutout } from './segment';
 import { SEC, fitContain } from './timeline.ts';
 import type { MediaClip, Project, TextClip, Us } from './schema';
 
@@ -239,7 +241,8 @@ export function visibleAt(p: Project, t: Us): Visible[] {
   return out;
 }
 
-function drawMedia(ctx: Ctx, W: number, H: number, p: Project, v: Visible, img: CanvasImageSource, background: boolean): TextBox {
+// `personOnly` draws just the person (over text set behind them).
+function drawMedia(ctx: Ctx, W: number, H: number, p: Project, v: Visible, img: CanvasImageSource, background: boolean, personOnly = false): TextBox {
   const c = v.clip;
   const a = p.assets[c.assetId];
   const [ew, eh] = cropSize(a, c.crop);
@@ -248,9 +251,15 @@ function drawMedia(ctx: Ctx, W: number, H: number, p: Project, v: Visible, img: 
   const fit = fitContain(ew, eh, W, H);
   const box = { cx: tr.x * W, cy: tr.y * H, w: fit.w * tr.scale, h: fit.h * tr.scale };
   const k = Math.min(1, Math.max(box.w, box.h, 1) / Math.max(ew, eh)); // grade at the size it is drawn, never above the source
-  const src = graded(cropped(img, c.crop), ew * k, eh * k, c);
+  let src = graded(cropped(img, c.crop), ew * k, eh * k, c);
+  if (c.cutout || personOnly) {
+    // One mask per frame: a playing video's own time, a photo once, an export frame by its clip time.
+    const frame = typeof HTMLVideoElement !== 'undefined' && img instanceof HTMLVideoElement ? img.currentTime : c.kind === 'photo' ? 0 : v.local;
+    const key = `${c.id}|${frame}|${Math.round(ew * k)}x${Math.round(eh * k)}|${JSON.stringify(c.crop)}`;
+    src = cutout(src, ew * k, eh * k, key, personOnly ? { bg: 'clear' } : c.cutout!);
+  }
   // Blurred background: the same picture, filling the frame, behind the clip (for a landscape clip in a portrait frame).
-  if (background && p.canvas.kind === 'blur') {
+  if (background && !personOnly && p.canvas.kind === 'blur') {
     const s = Math.max(W / ew, H / eh) * 1.08;
     ctx.filter = `blur(${(p.canvas.level * 0.012 * Math.max(W, H)).toFixed(1)}px) brightness(0.85)`;
     ctx.drawImage(src, (W - ew * s) / 2, (H - eh * s) / 2, ew * s, eh * s);
@@ -272,18 +281,17 @@ export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, f
   ctx.fillStyle = p.canvas.kind === 'colour' ? p.canvas.colour : '#000000';
   ctx.fillRect(0, 0, W, H);
   const boxes: TextBox[] = [];
-  let background = true;
-  for (const v of visibleAt(p, t)) {
-    const img = frames.get(v.clip.id);
-    if (!img) continue;
-    const box = drawMedia(ctx, W, H, p, v, img, background && v.main);
-    if (v.main) background = false;
-    else boxes.push(box);
-  }
-  for (const track of p.tracks) {
-    if (track.kind !== 'text' || track.hidden) continue;
-    for (const c of track.clips) if (c.kind === 'text' && t >= c.start && t < c.start + c.duration) boxes.push(drawText(ctx, W, H, c, t - c.start));
-  }
+  const visible = visibleAt(p, t).filter((v) => frames.get(v.clip.id));
+  const main = visible.filter((v) => v.main);
+  main.forEach((v, i) => drawMedia(ctx, W, H, p, v, frames.get(v.clip.id)!, i === 0));
+  const texts = p.tracks.filter((tr) => tr.kind === 'text' && !tr.hidden).flatMap((tr) => tr.clips).filter((c): c is TextClip => c.kind === 'text' && t >= c.start && t < c.start + c.duration);
+  // Text behind the person: drawn over the main video, then the person from that video is drawn again on top.
+  const behind = texts.filter((c) => c.behind);
+  for (const c of behind) boxes.push(drawText(ctx, W, H, c, t - c.start));
+  if (behind.length) for (const v of main) drawMedia(ctx, W, H, p, v, frames.get(v.clip.id)!, false, true);
+  for (const v of visible) if (!v.main) boxes.push(drawMedia(ctx, W, H, p, v, frames.get(v.clip.id)!, false));
+  for (const c of texts) if (!c.behind) boxes.push(drawText(ctx, W, H, c, t - c.start));
+  applyEffects(ctx, W, H, p, t);
   ctx.restore();
   return boxes;
 }

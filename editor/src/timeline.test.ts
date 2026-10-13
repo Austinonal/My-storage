@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AudioClip, MediaAsset, MediaClip, TextClip } from './schema.ts';
-import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setSpeed, setCurve, setCrop, insertFreeze, setTransition, setTransformAt, toggleKeyframe, setFades, extractAudio, setReversed, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, type TemplateSlot } from './timeline.ts';
+import { SEC, addAudio, addMedia, applyTemplate, assertValid, deleteClip, findClip, fitContain, moveClip, newProject, outputSize, projectDuration, replaceClip, setAdjust, setAnim, setFilter, snap, snapPoints, trimEdge, addOverlay, setTransform, addCaptions, setSpeed, setCurve, setCrop, insertFreeze, setTransition, setTransformAt, toggleKeyframe, setFades, extractAudio, setReversed, setPhotoDuration, setTextTiming, splitAt, trimClip, updateText, addText, addEffect, setEffect, syncToBeats, keepParts, setReframe, setFollow, type TemplateSlot } from './timeline.ts';
+import { transformAt } from './keyframes.ts';
 
 const asset: MediaAsset = {
   id: 'a1',
@@ -384,5 +385,69 @@ test('keyframed transform edits, crop clamps, freeze inserts a still, fades and 
   const a = extractAudio(p, v.id);
   assert.equal((findClip(p, v.id) as MediaClip).volume, 0);
   assert.equal(findClip(p, a).start, findClip(p, v.id).start);
+  assertValid(p);
+});
+
+test('effects: own track on top, free in time, split and trimmed like text, no position or volume', () => {
+  const p = make();
+  const id = addEffect(p, 2 * SEC, 'vhs');
+  const track = p.tracks.at(-1)!;
+  assert.equal(track.kind, 'effect');
+  assert.equal(findClip(p, id).start, 2 * SEC);
+  const right = splitAt(p, id, 3 * SEC)!;
+  assert.equal(findClip(p, right).start, 3 * SEC);
+  setEffect(p, right, 'glitch');
+  assert.equal((findClip(p, right) as { effect: string }).effect, 'glitch');
+  trimEdge(p, findClip(p, id), 'in', -SEC);
+  assert.equal(findClip(p, id).start, SEC);
+  assert.throws(() => setTransformAt(p, id, 0, { x: 0.2 }));
+  assertValid(p);
+});
+
+test('beat sync: cuts land on beats, every n-th beat, short videos keep what they have', () => {
+  const p = make();
+  const photo: MediaAsset = { ...asset, id: 'ph', kind: 'photo', duration: 0 };
+  const short: MediaAsset = { ...asset, id: 's1', duration: 0.6 * SEC };
+  addMedia(p, [photo, short, photo]);
+  const beats = Array.from({ length: 40 }, (_, i) => Math.round((0.2 + i * 0.5) * SEC));
+  syncToBeats(p, beats, 2);
+  const ends = p.tracks[0].clips.map((c) => c.start + c.duration);
+  assert.equal(ends[0], 0.7 * SEC); // the video ends on the 2nd beat
+  assert.equal(ends[1], 1.7 * SEC); // the photo on the 4th
+  assert.equal(ends[2], 2.3 * SEC); // the 0.6 s video cannot reach 2.7 s
+  assert.equal(ends[3], 2.7 * SEC); // and the next clip is back on the beat
+  assertValid(p);
+});
+
+test('keep parts: silent stretches of a main video are cut out and the rest moves up', () => {
+  const p = make();
+  addMedia(p, [{ ...asset, id: 'a2' }]);
+  const removed = keepParts(p, clipOf(p).id, [[0, 2 * SEC], [5 * SEC, 7 * SEC]]);
+  assert.equal(removed, 2);
+  const main = p.tracks[0].clips as MediaClip[];
+  assert.deepEqual(main.map((c) => [c.sourceIn / SEC, c.duration / SEC]), [[0, 2], [5, 2], [0, 10]]);
+  assertValid(p);
+});
+
+test('reframe: a landscape clip in a portrait frame fills it and slides to keep the person centred', () => {
+  const p = make();
+  const [id] = addMedia(p, [{ ...asset, id: 'wide', width: 1920, height: 1080 }]);
+  setReframe(p, id, [{ at: 0, fx: 0.5 }, { at: SEC, fx: 0.7 }, { at: 2 * SEC, fx: 0.99 }]);
+  const c = findClip(p, id) as MediaClip;
+  const bw = (16 / 9) / (9 / 16); // the picture is 3.16 frames wide once it fills the height
+  assert.ok(Math.abs(transformAt(c, 0).scale - bw) < 0.01);
+  assert.ok(Math.abs(transformAt(c, 0).x - 0.5) < 1e-6);
+  assert.ok(Math.abs(transformAt(c, SEC).x - (0.5 - 0.2 * bw)) < 0.01); // the person at 0.7 lands in the middle
+  assert.ok(Math.abs(transformAt(c, 2 * SEC).x - (0.5 - (bw - 1) / 2)) < 0.01); // near the edge: stops where the picture ends
+  assertValid(p);
+});
+
+test('follow: a text keeps its offset from what it tracks and keeps its other keyframes', () => {
+  const p = make();
+  const id = addText(p, 0, 'hi');
+  setFollow(p, id, [{ at: 0, dx: 0, dy: 0 }, { at: SEC, dx: 0.1, dy: -0.05 }, { at: 2 * SEC, dx: 0.2, dy: 0 }]);
+  const c = findClip(p, id) as TextClip;
+  assert.ok(Math.abs(transformAt(c, SEC).x - 0.6) < 1e-6 && Math.abs(transformAt(c, SEC).y - 0.77) < 1e-6);
+  assert.ok(Math.abs(transformAt(c, 1.5 * SEC).x - 0.65) < 1e-6);
   assertValid(p);
 });

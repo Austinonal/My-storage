@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { ArrowLeftRight, Film, Image, Layers, Music, Plus, Type, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeftRight, Film, Image, Layers, Music, Plus, Type, Zap, ZoomIn, ZoomOut } from 'lucide-react';
 import { SEC, formatTime, projectDuration, snap, snapPoints, sourceOut } from '../timeline.ts';
 import { PEAK_RATE, THUMB_H, peaksOf, stripOf } from '../thumbs';
 import { sourceAt } from '../timing.ts';
 import { keyTimes } from '../keyframes';
+import { effectName } from '../effects';
 import type { AudioClip, Clip, MediaAsset, MediaClip, Project, Us } from '../schema';
 
 type Move = { index: number } | { start: Us };
@@ -71,12 +72,25 @@ function Waveform({ asset, clip, pps }: { asset: MediaAsset; clip: AudioClip; pp
   );
 }
 
+// The music's beats on its clip, where cuts land when the main track follows the beat.
+function BeatMarks({ beats, clip, pps }: { beats: number[]; clip: AudioClip; pps: number }) {
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0">
+      {beats.map((b) => {
+        const at = (b * SEC - clip.sourceIn) / clip.speed;
+        return at >= 0 && at <= clip.duration ? <span key={b} className="absolute bottom-0.5 size-1.5 -translate-x-1/2 rounded-pill bg-warning" style={{ left: (at / SEC) * pps }} /> : null;
+      })}
+    </span>
+  );
+}
+
 const KIND = {
   video: { label: 'วิดีโอ', icon: Film, cls: 'bg-raised' },
   photo: { label: 'รูป', icon: Image, cls: 'bg-raised' },
   audio: { label: 'เสียง', icon: Music, cls: 'bg-clip-audio' },
   text: { label: 'ข้อความ', icon: Type, cls: 'bg-clip-text' },
   overlay: { label: 'ภาพซ้อน', icon: Layers, cls: 'bg-raised' },
+  effect: { label: 'เอฟเฟกต์', icon: Zap, cls: 'bg-clip-effect' },
   empty: { label: 'ช่องว่าง', icon: Plus, cls: 'border-dashed border-muted bg-surface text-muted' },
 } as const;
 
@@ -280,15 +294,15 @@ export function Timeline({
           {project.tracks.map((track) => (
             <div key={track.id} className={`relative mt-1 ${track.kind === 'main' ? 'h-14' : 'h-10'}`} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
               {track.clips.map((c, i) => {
-                const empty = c.kind !== 'text' && !!project.assets[c.assetId]?.placeholder;
+                const empty = c.kind !== 'text' && c.kind !== 'effect' && !!project.assets[c.assetId]?.placeholder;
                 const k = KIND[empty ? 'empty' : track.kind === 'overlay' ? 'overlay' : c.kind];
                 const Icon = k.icon;
                 const selected = c.id === selectedId;
                 const dragging = drag?.id === c.id;
-                const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text || 'ข้อความ' : project.assets[c.assetId]?.name ?? '';
+                const name = empty ? 'แตะแล้วกด “แทนที่”' : c.kind === 'text' ? c.text || 'ข้อความ' : c.kind === 'effect' ? effectName(c.effect) : project.assets[c.assetId]?.name ?? '';
                 const left = (c.start / SEC) * pps + (dragging ? drag.dx : 0);
                 const width = Math.max(4, (c.duration / SEC) * pps - 2);
-                const asset = c.kind === 'text' || empty ? null : project.assets[c.assetId];
+                const asset = c.kind === 'text' || c.kind === 'effect' || empty ? null : project.assets[c.assetId];
                 return [
                   <button
                     key={c.id}
@@ -307,11 +321,13 @@ export function Timeline({
                   >
                     {asset && c.kind !== 'audio' && <Filmstrip asset={asset} clip={c as MediaClip} pps={pps} h={track.kind === 'main' ? 52 : 36} />}
                     {asset && c.kind === 'audio' && <Waveform asset={asset} clip={c} pps={pps} />}
+                    {asset?.beats && c.kind === 'audio' && <BeatMarks beats={asset.beats} clip={c} pps={pps} />}
                     <Icon size={14} aria-hidden className={`relative shrink-0 ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60' : ''}`} />
                     <span className={`relative min-w-0 truncate ${asset && c.kind !== 'audio' ? 'rounded-sm bg-bg/60 px-0.5' : ''}`}>{name}</span>
                   </button>,
                   selected &&
                     c.kind !== 'audio' &&
+                    c.kind !== 'effect' &&
                     keyTimes(c).map((at) => (
                       <span
                         key={`${c.id}-key-${at}`}

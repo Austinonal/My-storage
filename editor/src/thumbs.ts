@@ -93,6 +93,38 @@ async function makePeaks(a: MediaAsset): Promise<Float32Array | null> {
   }
 }
 
+// A file's sound from `from` to `to` seconds as one channel (the sides averaged), for finding beats and speech.
+export async function monoOf(a: MediaAsset, from = 0, to = a.duration / SEC) {
+  const input = openInput(await openMedia(a.file));
+  try {
+    const track = await input.getPrimaryAudioTrack();
+    if (!track || !(await track.canDecode())) return null;
+    const parts: Float32Array[] = [];
+    let rate = 0;
+    for await (const { buffer, timestamp } of new AudioBufferSink(track).buffers(from, to)) {
+      rate = buffer.sampleRate;
+      const skip = Math.max(0, Math.round((from - timestamp) * rate));
+      const take = Math.min(buffer.length, Math.round((to - timestamp) * rate));
+      if (take <= skip) continue;
+      const out = new Float32Array(take - skip);
+      for (let c = 0; c < buffer.numberOfChannels; c++) {
+        const ch = buffer.getChannelData(c);
+        for (let i = 0; i < out.length; i++) out[i] += ch[skip + i] / buffer.numberOfChannels;
+      }
+      parts.push(out);
+    }
+    const samples = new Float32Array(parts.reduce((n, x) => n + x.length, 0));
+    let at = 0;
+    for (const x of parts) {
+      samples.set(x, at);
+      at += x.length;
+    }
+    return rate ? { samples, rate } : null;
+  } finally {
+    input.dispose();
+  }
+}
+
 const covers = new Map<string, Promise<string | null>>();
 
 // One frame (half a second in, or the photo) as a small JPEG, for the project list.

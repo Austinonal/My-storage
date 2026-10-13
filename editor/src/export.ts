@@ -23,6 +23,7 @@ import { fileSecondsAt, rateAt } from './timing.ts';
 import { voiceChain } from './voice';
 import { loadFonts } from './fonts';
 import { prepareLuts } from './colour';
+import { needsPerson, preparePerson } from './segment';
 
 export class ExportError extends Error {
   constructor(readonly code: 'no-video-encoder') {
@@ -57,6 +58,7 @@ export async function exportProject(p: Project, s: ExportSettings, onProgress: (
   const mixed = await prepareAudio(p);
   signal.throwIfAborted();
   try {
+    if (needsPerson(p)) throw new WorkerUnavailable('the person cutout model loads on the main thread only');
     await inWorker(p, s, mixed, onProgress, signal);
   } catch (e) {
     if (!(e instanceof WorkerUnavailable)) throw e;
@@ -124,7 +126,7 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
   if (audio) output.addAudioTrack(audio);
 
   try {
-    await Promise.all([loadFonts(), prepareLuts(p)]);
+    await Promise.all([loadFonts(), prepareLuts(p), preparePerson(p)]);
     await output.start();
     // Audio goes in first: it is small, so the muxer can hold it while the video streams in.
     if (audio && mixed) {
@@ -161,7 +163,7 @@ export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAud
 // Pictures for every clip that shows in the frame (main clips, two during a transition, and overlays), pulled in frame order.
 // Each video gets its own decoder, opened when it first shows and closed after its last frame; the time asked of it
 // follows the clip's speed, speed curve and direction (reversed clips read their reversed copy).
-function clipFeeder(p: Project, width: number, height: number, frames: number, frameTime: (n: number) => number) {
+export function clipFeeder(p: Project, width: number, height: number, frames: number, frameTime: (n: number) => number) {
   type Feed = { c: MediaClip; frames: number[]; locals: number[]; next: number; bmp?: ImageBitmap; input?: ReturnType<typeof openInput>; it?: AsyncIterator<WrappedCanvas | null> };
   const feeds = new Map<string, Feed>();
   for (let n = 0; n < frames; n++) {

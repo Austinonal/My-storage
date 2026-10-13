@@ -159,6 +159,20 @@ export function Slider({
   );
 }
 
+export function Switch({ label, hint, on, disabled, onChange }: { label: string; hint: string; on: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)} className={`flex items-center gap-3 rounded-md bg-raised p-3 text-left disabled:opacity-40 ${focus}`}>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-sm">{label}</span>
+        <span className="text-xs text-muted">{hint}</span>
+      </span>
+      <span aria-hidden className={`relative h-6 w-11 shrink-0 rounded-pill transition-colors ${on ? 'bg-accent' : 'bg-border'}`}>
+        <span className={`absolute top-0.5 size-5 rounded-pill bg-white transition-all ${on ? 'left-5.5' : 'left-0.5'}`} />
+      </span>
+    </button>
+  );
+}
+
 export function CategoryTabs({ items, value, onChange }: { items: string[]; value: string; onChange: (v: string) => void }) {
   return (
     <div className="flex h-10 gap-4 overflow-x-auto">

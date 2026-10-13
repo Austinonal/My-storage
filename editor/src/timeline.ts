@@ -1,6 +1,6 @@
-import { SCHEMA_VERSION, type Adjust, type Aspect, type Easing, type Grade, type Voice, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
+import { SCHEMA_VERSION, type Adjust, type Aspect, type Easing, type EffectClip, type Grade, type Voice, type AudioClip, type Clip, type MediaAsset, type MediaClip, type Project, type TextClip, type TextStyle, type Transform, type Us } from './schema.ts';
 import { CURVE_CHANNELS, HSL_COLOURS, WHEELS, neutralGrade } from './grade.ts';
-import { setEasing, setKeys, toggleKey } from './keyframes.ts';
+import { KEY_PROPS, setEasing, setKeys, toggleKey, transformAt } from './keyframes.ts';
 
 export const SEC = 1_000_000;
 // Seconds added when sampling a source frame: containers round timestamps (WebM to whole ms), which would otherwise land one frame early.
@@ -65,8 +65,8 @@ export function addMedia(p: Project, assets: MediaAsset[], index = p.tracks[0].c
 
 // Puts a clip on the first track of its kind where it does not overlap anything, or on a new track.
 // Pictures and videos off the main track are overlays.
-function place(p: Project, c: AudioClip | TextClip | MediaClip) {
-  const kind = c.kind === 'audio' || c.kind === 'text' ? c.kind : 'overlay';
+function place(p: Project, c: Clip) {
+  const kind = c.kind === 'audio' || c.kind === 'text' || c.kind === 'effect' ? c.kind : 'overlay';
   const fits = (clips: Clip[]) => clips.every((o) => o.id === c.id || o.start + o.duration <= c.start || c.start + c.duration <= o.start);
   let track = p.tracks.find((t) => t.kind === kind && fits(t.clips));
   if (!track) {
@@ -137,7 +137,7 @@ export function moveClip(p: Project, clipId: string, to: { index: number } | { s
     if (ownTrackFree) {
       track.clips.push(c);
       normalize(p);
-    } else place(p, c as AudioClip | TextClip | MediaClip);
+    } else place(p, c);
   }
   dropEmptyTracks(p);
 }
@@ -163,7 +163,7 @@ export function splitAt(p: Project, clipId: string, at: Us) {
   right.start = c.start + cut;
   right.duration = c.duration - cut;
   c.duration = cut;
-  if (c.kind !== 'photo' && c.kind !== 'text' && right.kind !== 'text' && right.kind !== 'photo') right.sourceIn = c.sourceIn + Math.round(cut * c.speed);
+  if ((c.kind === 'video' || c.kind === 'audio') && (right.kind === 'video' || right.kind === 'audio')) right.sourceIn = c.sourceIn + Math.round(cut * c.speed);
   right.keyframes = c.keyframes.filter((k) => k.at >= cut).map((k) => ({ ...k, at: k.at - cut }));
   c.keyframes = c.keyframes.filter((k) => k.at <= cut);
   if (c.kind === 'audio' && right.kind === 'audio') {
@@ -171,7 +171,7 @@ export function splitAt(p: Project, clipId: string, at: Us) {
     right.fadeIn = 0;
     c.fadeIn = Math.min(c.fadeIn, c.duration);
     right.fadeOut = Math.min(right.fadeOut, right.duration);
-  } else if (c.kind !== 'audio' && right.kind !== 'audio') {
+  } else if (c.kind !== 'audio' && c.kind !== 'effect' && right.kind !== 'audio' && right.kind !== 'effect') {
     c.animOut = null;
     right.animIn = null;
     if (right.kind !== 'text') right.animCombo = null;
@@ -392,7 +392,7 @@ export function setTransition(p: Project, fromClipId: string, presetId: string |
 // Moves or resizes a picture or text at clip time `at`: on a keyframe there when the clip has keyframes, else on the clip.
 export function setTransformAt(p: Project, clipId: string, at: Us, patch: Partial<Transform>) {
   const c = findClip(p, clipId);
-  if (c.kind === 'audio') throw new Error('sound has no position');
+  if (c.kind === 'audio' || c.kind === 'effect') throw new Error('sound and effects have no position');
   const clean: Partial<Transform> = { ...patch };
   if (clean.x !== undefined) clean.x = clamp(clean.x, -0.5, 1.5);
   if (clean.y !== undefined) clean.y = clamp(clean.y, -0.5, 1.5);
@@ -403,13 +403,13 @@ export function setTransformAt(p: Project, clipId: string, at: Us, patch: Partia
 
 export function toggleKeyframe(p: Project, clipId: string, at: Us) {
   const c = findClip(p, clipId);
-  if (c.kind === 'audio') throw new Error('sound has no position');
+  if (c.kind === 'audio' || c.kind === 'effect') throw new Error('sound and effects have no position');
   return toggleKey(c, clamp(Math.round(at), 0, c.duration), frameUs(p) / 2);
 }
 
 export function setKeyEasing(p: Project, clipId: string, at: Us, easing: Easing) {
   const c = findClip(p, clipId);
-  if (c.kind === 'audio') throw new Error('sound has no position');
+  if (c.kind === 'audio' || c.kind === 'effect') throw new Error('sound and effects have no position');
   setEasing(c, at, easing, frameUs(p) / 2);
 }
 
@@ -446,7 +446,7 @@ export function setMatch(p: Project, clipId: string, match: MediaClip['match']) 
 
 export function setVolume(p: Project, clipId: string, volume: number) {
   const c = findClip(p, clipId);
-  if (c.kind === 'text') throw new Error('text has no volume');
+  if (c.kind === 'text' || c.kind === 'effect') throw new Error('text and effects have no volume');
   c.volume = clamp(volume, 0, 2);
 }
 
@@ -460,7 +460,7 @@ export const sourceOut = (c: MediaClip | AudioClip): Us => c.sourceIn + Math.rou
 // `at` is a time in the source file; the edge moves there, clamped so the clip stays at least one frame long.
 export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us) {
   const c = findClip(p, clipId);
-  if (c.kind === 'text' || c.kind === 'photo') throw new Error('text and photos change duration, not source range');
+  if (c.kind === 'text' || c.kind === 'photo' || c.kind === 'effect') throw new Error('text, photos and effects change duration, not source range');
   const assetDuration = p.assets[c.assetId].duration;
   const minSpan = Math.ceil(frameUs(p) * c.speed);
   const out = sourceOut(c);
@@ -485,7 +485,7 @@ export function trimClip(p: Project, clipId: string, edge: 'in' | 'out', at: Us)
 
 // Dragging a clip's edge by `dt` on the timeline, measured from `from` (the clip as it was when the drag began).
 export function trimEdge(p: Project, from: Clip, edge: 'in' | 'out', dt: Us) {
-  if (from.kind === 'text') {
+  if (from.kind === 'text' || from.kind === 'effect') {
     if (edge === 'in') {
       const d = clamp(dt, -from.start, from.duration - frameUs(p));
       setTextTiming(p, from.id, from.start + d, from.duration - d);
@@ -499,10 +499,16 @@ export function trimEdge(p: Project, from: Clip, edge: 'in' | 'out', dt: Us) {
   }
 }
 
-// Times a dragged edge sticks to: the playhead, the ends of the video and every other clip's edges.
+// Times a dragged edge sticks to: the playhead, the ends of the video, every other clip's edges and the music's beats.
 export function snapPoints(p: Project, playhead: Us, exceptId: string): Us[] {
   const pts = [0, playhead, projectDuration(p)];
-  for (const t of p.tracks) for (const c of t.clips) if (c.id !== exceptId) pts.push(c.start, c.start + c.duration);
+  for (const t of p.tracks) {
+    for (const c of t.clips) {
+      if (c.id === exceptId) continue;
+      pts.push(c.start, c.start + c.duration);
+      if (c.kind === 'audio') for (const s of p.assets[c.assetId].beats ?? []) pts.push(c.start + Math.round((s * SEC - c.sourceIn) / c.speed)); // the music's beats
+    }
+  }
   return pts;
 }
 
@@ -526,7 +532,7 @@ function fitAnims(c: MediaClip | TextClip) {
 // The animation just chosen wins: Combo (Loop for text) clears In/Out and the reverse; an In/Out that no longer fits beside it shrinks.
 export function setAnim(p: Project, clipId: string, slot: 'in' | 'out' | 'combo', presetId: string | null, duration: Us) {
   const c = findClip(p, clipId);
-  if (c.kind === 'audio') throw new Error('audio has no animations');
+  if (c.kind === 'audio' || c.kind === 'effect') throw new Error('audio and effects have no animations');
   const anim = presetId ? { presetId, duration: Math.round(clamp(duration, Math.min(frameUs(p), c.duration), c.duration)) } : null;
   if (slot === 'combo') {
     if (c.kind === 'text') c.animLoop = anim;
@@ -571,6 +577,119 @@ export function addText(p: Project, at: Us, text = 'ข้อความ', styl
   return c.id;
 }
 
+// An effect layer at the playhead; effect tracks sit on top, so they restyle everything below them.
+export function addEffect(p: Project, at: Us, effect: string, seconds = 3) {
+  const c: EffectClip = { id: crypto.randomUUID(), kind: 'effect', effect, start: Math.max(0, Math.round(at)), duration: Math.max(frameUs(p), Math.round(seconds * SEC)), keyframes: [] };
+  place(p, c);
+  return c.id;
+}
+
+export function setEffect(p: Project, clipId: string, effect: string) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'effect') throw new Error('not an effect clip');
+  c.effect = effect;
+}
+
+// Person cutout: keep the person and remove, blur or swap the background (`image` is a photo asset, registered here).
+export function setCutout(p: Project, clipId: string, cutout: MediaClip['cutout'], image?: MediaAsset) {
+  const c = visualClip(p, clipId);
+  if (cutout?.bg === 'image') {
+    if (!image || image.kind !== 'photo') throw new Error('a background picture is a photo');
+    p.assets[image.id] = image;
+    c.cutout = { bg: 'image', image: image.id };
+  } else c.cutout = cutout ? { bg: cutout.bg } : null;
+}
+
+export function setBehind(p: Project, clipId: string, on: boolean) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'text') throw new Error('not a text clip');
+  c.behind = on;
+}
+
+// Replaces a clip's position keyframes between the first and last `at` with one full keyframe per point (linear between).
+function keyPath(c: MediaClip | TextClip, points: { at: Us; values: Transform }[]) {
+  const from = points[0].at;
+  const to = points[points.length - 1].at;
+  c.keyframes = c.keyframes.filter((k) => !(KEY_PROPS as readonly string[]).includes(k.prop) || k.at < from || k.at > to);
+  for (const { at, values } of points) for (const prop of KEY_PROPS) c.keyframes.push({ at, prop, value: values[prop], easing: 'linear' });
+}
+
+// Auto reframe: the clip zooms to fill the frame and slides so the person (`fx`, 0..1 across the picture) stays centred.
+export function setReframe(p: Project, clipId: string, path: { at: Us; fx: number }[]) {
+  const c = visualClip(p, clipId);
+  if (!path.length) return;
+  const a = p.assets[c.assetId];
+  const [ew, eh] = c.crop.rotate % 180 ? [a.height * c.crop.h, a.width * c.crop.w] : [a.width * c.crop.w, a.height * c.crop.h];
+  const [W, H] = outputSize(p.aspect, 1080);
+  const fit = fitContain(ew, eh, W, H);
+  const scale = Math.max(W / fit.w, H / fit.h); // contain -> cover
+  const bw = (fit.w * scale) / W; // picture width in frame widths
+  const base = { ...c.transform, y: 0.5, scale };
+  c.keyframes = c.keyframes.filter((k) => !(KEY_PROPS as readonly string[]).includes(k.prop));
+  c.transform = { ...base, x: 0.5 };
+  if (bw <= 1.001) return; // the picture is not wider than the frame: nothing to follow
+  const room = (bw - 1) / 2;
+  const at = (k: number) => Math.round(clamp(path[k].at, 0, c.duration));
+  keyPath(c, path.map((pt, k) => ({ at: at(k), values: { ...base, x: 0.5 + clamp(-(pt.fx - 0.5) * bw, -room, room) } })));
+}
+
+// Tracking: from the first point on, the clip moves with whatever it follows (dx, dy in frame fractions since then).
+export function setFollow(p: Project, clipId: string, path: { at: Us; dx: number; dy: number }[]) {
+  const c = findClip(p, clipId);
+  if ((c.kind !== 'text' && c.kind !== 'video' && c.kind !== 'photo') || !path.length) throw new Error('only pictures and text follow');
+  const start = transformAt(c, path[0].at);
+  const points = path
+    .filter((pt) => pt.at >= 0 && pt.at <= c.duration)
+    .map((pt) => ({ at: Math.round(pt.at), values: { ...transformAt(c, pt.at), x: clamp(start.x + pt.dx, -0.5, 1.5), y: clamp(start.y + pt.dy, -0.5, 1.5) } }));
+  if (points.length) keyPath(c, points);
+}
+
+export function setBeats(p: Project, assetId: string, beats: number[]) {
+  p.assets[assetId].beats = beats;
+}
+
+// Main-track cuts land on beats (timeline times): each clip ends on the first of every `every`-th beat it can reach.
+// A video too short for the next one keeps all it has; once the beats run out the rest stay as they are.
+export function syncToBeats(p: Project, beats: Us[], every = 1) {
+  const marks = beats.filter((_, i) => (i + 1) % every === 0).sort((a, b) => a - b);
+  const shortest = Math.max(frameUs(p), SEC / 4);
+  let t = 0;
+  for (const c of p.tracks[0].clips as MediaClip[]) {
+    const room = c.kind === 'photo' ? Infinity : Math.floor((p.assets[c.assetId].duration - c.sourceIn) / c.speed);
+    const end = marks.find((m) => m - t >= shortest);
+    if (end === undefined) break;
+    c.duration = Math.max(frameUs(p), end - t <= room ? end - t : room);
+    c.keyframes = c.keyframes.filter((k) => k.at <= c.duration);
+    fitAnims(c);
+    t += c.duration;
+  }
+  normalize(p);
+}
+
+// Keeps only the given parts of a main-track video (clip times), cutting out the rest; the clips after it move up.
+export function keepParts(p: Project, clipId: string, parts: [Us, Us][]) {
+  const c = findClip(p, clipId);
+  if (c.kind !== 'video' || trackOf(p, clipId).kind !== 'main') throw new Error('works on videos on the main track');
+  const cuts = [...new Set(parts.flat().map((x) => Math.round(clamp(x, 0, c.duration))))].sort((a, b) => b - a);
+  const pieces: { id: string; from: Us; to: Us }[] = [];
+  let to = c.duration;
+  for (const at of cuts) {
+    const id = splitAt(p, c.id, c.start + at); // from the end, so the clip being cut keeps its id and start
+    if (!id) continue;
+    pieces.push({ id, from: at, to });
+    to = at;
+  }
+  pieces.push({ id: c.id, from: 0, to });
+  let removed = 0;
+  for (const piece of pieces) {
+    const mid = (piece.from + piece.to) / 2;
+    if (parts.some(([a, b]) => mid >= a && mid <= b)) continue;
+    deleteClip(p, piece.id);
+    removed++;
+  }
+  return removed;
+}
+
 // Many captions at once (pasted lines or a subtitle file), each looking like `like` when given.
 export function addCaptions(p: Project, caps: { start: Us; duration: Us; text: string }[], like?: TextClip) {
   return caps.map((c) => {
@@ -589,13 +708,13 @@ export function updateText(p: Project, clipId: string, patch: { text?: string; s
   c.transform.scale = clamp(c.transform.scale, 0.2, 8);
 }
 
-// Text sits anywhere in time: set its start and length directly (the trim handles use this).
+// Text and effects sit anywhere in time: set the start and length directly (the trim handles use this).
 export function setTextTiming(p: Project, clipId: string, start: Us, duration: Us) {
   const c = findClip(p, clipId);
-  if (c.kind !== 'text') throw new Error('not a text clip');
+  if (c.kind !== 'text' && c.kind !== 'effect') throw new Error('not a text or effect clip');
   c.start = Math.max(0, Math.round(start));
   c.duration = Math.max(frameUs(p), Math.round(duration));
-  fitAnims(c);
+  if (c.kind === 'text') fitAnims(c);
   moveClip(p, c.id, { start: c.start });
 }
 
@@ -633,6 +752,7 @@ export function assertValid(p: Project) {
       end = c.start + c.duration;
       if (c.duration < minDur) fail(`clip ${c.id} shorter than one frame`);
       if (c.keyframes.some((k) => k.at < 0 || k.at > c.duration)) fail(`keyframe outside clip ${c.id}`);
+      if (c.kind === 'effect') continue;
       if (c.kind !== 'audio') {
         const solo = c.kind === 'text' ? c.animLoop : c.animCombo;
         if (solo && (c.animIn || c.animOut)) fail(`${c.kind === 'text' ? 'loop' : 'combo'} together with in/out on ${c.id}`);

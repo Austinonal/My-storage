@@ -1,26 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { BottomSheet, Button } from '../ui';
+import { BottomSheet, Button, Switch } from '../ui';
 import { edit } from '../store';
 import { autoLevels, recordShake } from '../quality';
 import { setQuality, setShake } from '../timeline.ts';
 import { importMessage } from './Home';
 import type { MediaAsset, MediaClip } from '../schema';
-
-const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
-
-function Switch({ label, hint, on, disabled, onChange }: { label: string; hint: string; on: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)} className={`flex items-center gap-3 rounded-md bg-raised p-3 text-left disabled:opacity-40 ${focus}`}>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm">{label}</span>
-        <span className="text-xs text-muted">{hint}</span>
-      </span>
-      <span aria-hidden className={`relative h-6 w-11 shrink-0 rounded-pill transition-colors ${on ? 'bg-accent' : 'bg-border'}`}>
-        <span className={`absolute top-0.5 size-5 rounded-pill bg-white transition-all ${on ? 'left-5.5' : 'left-0.5'}`} />
-      </span>
-    </button>
-  );
-}
 
 export function QualitySheet({ open, onClose, clip, asset, onExport }: { open: boolean; onClose: () => void; clip: MediaClip; asset: MediaAsset; onExport: () => void }) {
   const [work, setWork] = useState<{ what: string; progress: number } | null>(null);

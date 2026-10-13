@@ -47,3 +47,30 @@ export function linesToCaptions(text: string, at: Us, seconds: number): Caption[
     .filter(Boolean)
     .map((t, i) => ({ start: at + i * d, duration: d, text: t }));
 }
+
+// Speech recognition output -> captions short enough to read: long stretches are split between words (Thai has no spaces,
+// so words come from the browser's word segmenter), each piece getting time in proportion to its length.
+export function chunksToCaptions(chunks: { timestamp: [number, number | null]; text: string }[], total: number, maxChars = 30): Caption[] {
+  const words = (s: string) => [...new Intl.Segmenter('th', { granularity: 'word' }).segment(s)].map((x) => x.segment);
+  const out: Caption[] = [];
+  for (const { timestamp, text } of chunks) {
+    const clean = text.trim();
+    const from = timestamp[0];
+    const to = Math.min(total, timestamp[1] ?? total);
+    if (!clean || !(to > from)) continue;
+    const pieces: string[] = [''];
+    for (const w of words(clean)) {
+      if (pieces[pieces.length - 1].length + w.length > maxChars && pieces[pieces.length - 1].trim()) pieces.push('');
+      pieces[pieces.length - 1] += w;
+    }
+    const lines = pieces.map((x) => x.trim()).filter(Boolean);
+    const chars = lines.reduce((n, l) => n + l.length, 0);
+    let at = from;
+    for (const l of lines) {
+      const d = ((to - from) * l.length) / chars;
+      out.push({ start: Math.round(at * 1000) * MS, duration: Math.max(MS, Math.round(d * 1000) * MS), text: l });
+      at += d;
+    }
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { linesToCaptions, parseSubtitles } from './captions.ts';
+import { chunksToCaptions, linesToCaptions, parseSubtitles } from './captions.ts';
 
 const SEC = 1_000_000;
 
@@ -23,4 +23,25 @@ test('pasted lines become back-to-back captions', () => {
     { start: 3.5 * SEC, duration: 1.5 * SEC, text: 'สอง' },
     { start: 5 * SEC, duration: 1.5 * SEC, text: 'สาม' },
   ]);
+});
+
+test('speech chunks: long Thai stretches split between words, short ones stay, timing follows length', () => {
+  const caps = chunksToCaptions(
+    [
+      { timestamp: [0, 2], text: ' สวัสดีครับ' },
+      { timestamp: [2.5, 8.5], text: 'วันนี้เราจะไปเที่ยวทะเลกันที่จังหวัดชลบุรีกับเพื่อนๆ ทุกคนนะครับ' },
+      { timestamp: [9, null], text: '  ' },
+      { timestamp: [9, null], text: 'bye' },
+    ],
+    10,
+  );
+  assert.equal(caps[0].text, 'สวัสดีครับ');
+  assert.deepEqual([caps[0].start, caps[0].duration], [0, 2 * SEC]);
+  const middle = caps.slice(1, -1);
+  assert.ok(middle.length >= 2);
+  assert.ok(middle.every((c) => c.text.length <= 30));
+  assert.equal(middle.map((c) => c.text).join('').replace(/\s/g, ''), 'วันนี้เราจะไปเที่ยวทะเลกันที่จังหวัดชลบุรีกับเพื่อนๆทุกคนนะครับ');
+  assert.equal(middle[0].start, 2.5 * SEC);
+  assert.ok(Math.abs(middle.at(-1)!.start + middle.at(-1)!.duration - 8.5 * SEC) < 2000);
+  assert.deepEqual(caps.at(-1), { start: 9 * SEC, duration: SEC, text: 'bye' });
 });

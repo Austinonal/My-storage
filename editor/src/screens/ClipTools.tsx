@@ -5,8 +5,12 @@ import { edit } from '../store';
 import { SPEED_PRESETS } from '../timing.ts';
 import { TRANSITIONS } from '../transitions';
 import { VOICES } from '../voice';
-import { SEC, extractAudio, formatTime, setCrop, setCurve, setFades, setSpeed, setTransition, setVoice, setVolume } from '../timeline.ts';
-import type { AudioClip, MediaClip, Project, Us } from '../schema';
+import { EFFECTS } from '../effects';
+import { SEC, addEffect, extractAudio, formatTime, projectDuration, setBeats, setCrop, setCutout, setCurve, setEffect, setFades, setSpeed, setTransition, setVoice, setVolume, syncToBeats } from '../timeline.ts';
+import { findBeats } from '../sound.ts';
+import { monoOf } from '../thumbs';
+import { loadSegmenter } from '../segment';
+import type { AudioClip, EffectClip, MediaClip, Project, Us } from '../schema';
 import type { Still } from './AnimationSheet';
 
 const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent';
@@ -407,6 +411,133 @@ export function VoiceoverSheet({ open, onClose, onRecord, time }: { open: boolea
             {error}
           </p>
         )}
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ---- effect layers: with no effect selected a tap adds one at the playhead, otherwise it swaps the selected one ----
+
+export function EffectSheet({ open, onClose, project, clip, time, onAdded }: { open: boolean; onClose: () => void; project: Project; clip: EffectClip | null; time: Us; onAdded: (id: string) => void }) {
+  function choose(effect: string) {
+    if (clip) return edit((d) => setEffect(d, clip.id, effect));
+    const end = projectDuration(project);
+    const at = Math.min(time, Math.max(0, end - SEC));
+    let id = '';
+    edit((d) => {
+      id = addEffect(d, at, effect, Math.min(3, Math.max(SEC, end - at) / SEC));
+    });
+    onAdded(id);
+  }
+  return (
+    <BottomSheet open={open} title="เอฟเฟกต์" onClose={onClose} modal={false}>
+      <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-4 gap-2">
+          {EFFECTS.map((e) => (
+            <PresetTile key={e.id} label={e.name} selected={clip?.effect === e.id} onClick={() => choose(e.id)} />
+          ))}
+        </div>
+        <p className="text-xs text-muted">เอฟเฟกต์มีผลกับทั้งภาพ (ทุกแทร็กข้างใต้) ตลอดช่วงของคลิปเอฟเฟกต์ ลากขอบคลิปบนไทม์ไลน์เพื่อปรับช่วง</p>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ---- beat sync: find the music's beats, then make the main track cut on them ----
+
+export function BeatSheet({ open, onClose, project, clip, onSynced }: { open: boolean; onClose: () => void; project: Project; clip: AudioClip; onSynced: () => void }) {
+  const asset = project.assets[clip.assetId];
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [every, setEvery] = useState(1);
+  const beats = (asset.beats ?? []).map((b) => clip.start + Math.round((b * SEC - clip.sourceIn) / clip.speed)).filter((t) => t >= clip.start && t <= clip.start + clip.duration);
+  async function detect() {
+    setBusy(true);
+    setMessage('');
+    try {
+      const sound = await monoOf(asset);
+      const found = sound ? findBeats(sound.samples, sound.rate) : null;
+      if (!found?.beats.length) return setMessage('ไม่พบจังหวะที่ชัดพอในเสียงนี้');
+      edit((d) => setBeats(d, asset.id, found.beats));
+      setMessage(`พบ ${found.beats.length} บีท · ประมาณ ${Math.round(found.bpm)} ครั้งต่อนาที`);
+    } catch {
+      setMessage('อ่านเสียงจากไฟล์นี้ไม่ได้');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <BottomSheet open={open} title="ตัดตามจังหวะเพลง" onClose={onClose} modal={false}>
+      <div className="flex flex-col gap-3">
+        <Button variant="secondary" disabled={busy} onClick={() => void detect()}>
+          {busy ? 'กำลังฟังจังหวะ…' : asset.beats ? 'หาจังหวะใหม่' : 'หาจังหวะอัตโนมัติ'}
+        </Button>
+        {asset.beats && (
+          <>
+            <div role="radiogroup" aria-label="เปลี่ยนภาพทุกกี่บีท" className="flex gap-1">
+              {[1, 2, 4].map((n) => (
+                <button key={n} role="radio" aria-checked={every === n} onClick={() => setEvery(n)} className={`h-9 flex-1 rounded-md text-sm ${every === n ? 'bg-accent text-on-accent' : 'bg-raised'} ${focus}`}>
+                  ทุก {n} บีท
+                </button>
+              ))}
+            </div>
+            <Button
+              disabled={!beats.length}
+              onClick={() => {
+                edit((d) => syncToBeats(d, beats, every));
+                onSynced();
+              }}
+            >
+              วางคลิปให้เปลี่ยนตรงบีท
+            </Button>
+          </>
+        )}
+        <p role="status" className="text-xs text-muted">
+          {message || 'จุดสีเหลืองบนคลิปเพลงคือบีท ลากคลิปหรือขอบคลิปไปใกล้ๆ แล้วจะติดบีทให้เอง'}
+        </p>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ---- person cutout: the model runs on the phone; the first use loads it (a moment) ----
+
+type Bg = NonNullable<MediaClip['cutout']>['bg'];
+const CUTOUTS: [string, Bg | null][] = [
+  ['ไม่ตัด', null],
+  ['ลบพื้นหลัง', 'clear'],
+  ['เบลอพื้นหลัง', 'blur'],
+  ['เปลี่ยนเป็นรูป', 'image'],
+];
+
+export function CutoutSheet({ open, onClose, clip, onPickImage }: { open: boolean; onClose: () => void; clip: MediaClip; onPickImage: () => void }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const on = clip.cutout?.bg ?? null;
+  function choose(bg: Bg | null) {
+    if (bg) {
+      setState('loading');
+      loadSegmenter().then(() => setState('idle'), () => setState('error'));
+    }
+    if (bg === 'image') return onPickImage();
+    edit((d) => setCutout(d, clip.id, bg ? { bg } : null));
+  }
+  return (
+    <BottomSheet open={open} title="ตัดพื้นหลัง" onClose={onClose} modal={false}>
+      <div className="flex flex-col gap-2">
+        <div role="radiogroup" aria-label="พื้นหลัง" className="grid grid-cols-2 gap-2">
+          {CUTOUTS.map(([label, bg]) => (
+            <button key={label} role="radio" aria-checked={on === bg} onClick={() => choose(bg)} className={`h-11 rounded-md text-sm ${on === bg ? 'bg-accent text-on-accent' : 'bg-raised'} ${focus}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p role="status" className="text-xs text-muted">
+          {state === 'loading'
+            ? 'กำลังเตรียมตัวแยกคน…'
+            : state === 'error'
+              ? 'เปิดตัวแยกคนไม่สำเร็จ ลองใหม่อีกครั้ง'
+              : 'แยกคนออกจากพื้นหลังบนเครื่องนี้ ได้ผลดีกับคลิปที่เห็นคนชัดๆ · ภาพซ้อนที่ลบพื้นหลังจะเห็นวิดีโอหลักอยู่ข้างหลัง'}
+        </p>
       </div>
     </BottomSheet>
   );

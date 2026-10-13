@@ -36,7 +36,7 @@ Animation duration slider separate from layer length,text,must,yes,yes,same shee
 Thai and emoji text shaping,text,must,unknown,partial,"Thai wraps on word boundaries (browser dictionary) and never splits a letter cluster; emoji draw with the system font, untested on a phone"
 Text templates,text,should,yes,no,our own templates only
 Import custom font file,text,should,yes,no,Play listing custom fonts
-Auto captions from speech,text,should,yes,no,on-device speech model; v2
+Auto captions from speech,text,should,yes,yes,"Whisper base (q8, about 80 MB, downloaded once from the model hub, then offline) in a worker; Thai or English; long lines split between words; Thai accuracy not measured here (no Thai speech to test with)"
 Text to speech voices,text,should,yes,no,Android TTS; v2
 Bilingual captions and filler-word removal,text,could,yes,no,
 Stickers layer,stickers,should,yes,no,our own or open-licence stickers only
@@ -49,20 +49,20 @@ Audio split trim delete,audio,must,yes,yes,
 Waveform on audio clips,audio,should,yes,yes,"loudness curve per audio clip, follows trims and volume"
 Voice effects (pitch robot chipmunk etc),audio,should,yes,yes,"high, low, robot, echo, radio; same Web Audio graph in preview and export"
 Noise reduction,audio,should,yes,no,
-Beat markers manual and auto,audio,could,yes,no,
+Beat markers manual and auto,audio,could,yes,partial,"auto only: beats found on the device (tempo + phase from onset strength), shown on the music clip, clips and edges snap to them, one tap puts cuts every 1/2/4 beats; no manual beat marks"
 Audio speed with pitch preserved,audio,should,unknown,no,
 Filters with intensity,colour,must,yes,yes,24 of our own 3D LUT looks + import your .cube files; intensity 0-100 %
 Adjust brightness contrast saturation exposure,colour,must,yes,yes,WebGL2 pass shared by preview and export
 Adjust sharpen highlights shadows temperature tint,colour,should,yes,yes,same pass
 HSL and curves,colour,could,yes,yes,"HSL for 8 colours (hue, saturation, lightness), RGB + per-channel curves, 3 colour wheels, colour match from a photo or clip"
 Apply filter or adjust to all clips or as a timeline layer,colour,should,yes,partial,"""apply to all clips"" button; no filter layer on the timeline"
-Video effects (glitch blur VHS light leak shake zoom),effects,should,yes,no,our own shaders; v2
-Body effects that follow a person,effects,could,yes,no,needs segmentation model
+Video effects (glitch blur VHS light leak shake zoom),effects,should,yes,partial,"effect layers on their own track over everything below: VHS, glitch, light leak, film dust, scan lines (one WebGL2 pass, preview = export); no blur/shake/zoom effects yet"
+Body effects that follow a person,effects,could,yes,partial,"text behind the person, tracking and person cutout; no glow or outline around the body"
 Overlay picture-in-picture,overlay,should,yes,yes,"photo and video overlays on their own tracks under text; drag / pinch / turn on the preview; filters, adjust, animations; exported with one decoder per overlay"
 Opacity and blend modes,overlay,should,yes,partial,opacity yes; no blend modes
 Mask shapes with feather and invert,overlay,should,yes,no,v2
 Chroma key,overlay,should,yes,no,Play listing; v2
-Auto background removal,overlay,could,yes,no,needs segmentation model
+Auto background removal,overlay,could,yes,yes,"MediaPipe selfie segmenter (250 KB, bundled) on the device: remove, blur or swap the background per clip; works on overlays too; exports with it render on the main thread"
 Aspect ratio presets 9:16 16:9 1:1 3:4 4:3,canvas,must,yes,yes,plus 4:5 and 2:1
 Canvas colour and blur background,canvas,must,yes,yes,colour or 4 levels of blur from the clip itself
 Canvas image background,canvas,could,yes,no,
@@ -85,3 +85,7 @@ Build a template from any edited clip (cuts + In/Out/Combo),templates,should,no,
 Adjust ambient light clarity whites blacks fade vignette,colour,should,yes,yes,same WebGL2 pass
 Video quality: enhance stabilize deflicker,clip,should,yes,yes,enhance = auto levels + crispness; stabilize light/strong from a per-frame drift record (shake 10.2 -> 3.5 px/frame on a test clip); deflicker evens brightness (21 -> 2 per frame); no AI upscaling
 "Captions list, paste lines, import srt vtt",text,should,yes,yes,all captions in one list; pasted lines become back-to-back captions; .srt / .vtt import
+Remove silences automatically,audio,should,yes,yes,"one tap on a main-track video: pauses longer than 0.35 s cut out (noise floor vs speech level), 0.1 s kept around words; undo brings them back"
+Object tracking for text and overlays,effects,should,yes,yes,"tap a spot: the main track is rendered small and a square is matched frame to frame (10 per second); the result is position keyframes you can edit"
+Auto reframe to another aspect,canvas,should,yes,yes,"clips wider than the frame zoom to fill it and slide to keep the person centred (person found every 0.25 s, smoothed, keyframes every 0.5 s); not for quarter-turned clips"
+Text behind a person,text,could,yes,yes,switch in the text position tab; the person from the main video is drawn again over the text

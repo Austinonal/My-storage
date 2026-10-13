@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { AlignCenter, AlignLeft, AlignRight, Captions } from 'lucide-react';
-import { BottomSheet, Button, CategoryTabs, PresetTile, Slider, Swatches } from '../ui';
+import { BottomSheet, Button, CategoryTabs, PresetTile, Slider, Swatches, Switch } from '../ui';
 import { edit } from '../store';
 import { FONTS, family } from '../fonts';
-import { SEC, updateText } from '../timeline.ts';
+import { SEC, setBehind, updateText } from '../timeline.ts';
 import type { TextClip, TextStyle } from '../schema';
 
 const COLOURS = ['#ffffff', '#000000', '#ff3b30', '#ff9500', '#ffd84d', '#34c759', '#00c7be', '#32ade6', '#007aff', '#af52de', '#ff4f8b', '#a2845e'];
@@ -212,6 +212,7 @@ export function TextSheet({ open, onClose, clip, shown, setTransform, onNext }: 
             </div>
             <Slider label="หมุน" value={Math.round(shown.rotation)} min={-180} max={180} step={1} format={(v) => `${v}°`} onChange={(v) => transform({ rotation: v }, 'rotate')} />
             <Slider label="ซูม" value={Math.round(shown.scale * 100)} min={20} max={400} step={5} format={(v) => `${v}%`} onChange={(v) => transform({ scale: v / 100 }, 'scale')} />
+            <Switch label="ไว้หลังคน" hint="ข้อความอยู่หลังตัวคนในวิดีโอหลัก เหมือนคนยืนบังตัวหนังสือ" on={!!clip.behind} onChange={(on) => edit((d) => setBehind(d, clip.id, on))} />
             <p className="text-xs text-muted">บนจอตัวอย่าง: ลากเพื่อย้าย ใช้สองนิ้วเพื่อย่อ/ขยายและหมุน</p>
           </>
         )}
