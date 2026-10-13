@@ -666,6 +666,17 @@ export function setFollow(p: Project, clipId: string, path: { at: Us; dx: number
   if (points.length) keyPath(c, points);
 }
 
+// Thumbnails: a layer (its track) goes one step up or down among the pictures and text above the background.
+export function moveLayer(p: Project, clipId: string, step: 1 | -1) {
+  const i = p.tracks.indexOf(trackOf(p, clipId));
+  const layered = (k: number) => k > 0 && (p.tracks[k]?.kind === 'overlay' || p.tracks[k]?.kind === 'text');
+  let j = i + step;
+  while (j > 0 && j < p.tracks.length && !layered(j)) j += step;
+  if (!layered(i) || !layered(j)) return false;
+  [p.tracks[i], p.tracks[j]] = [p.tracks[j], p.tracks[i]];
+  return true;
+}
+
 export function setBeats(p: Project, assetId: string, beats: number[]) {
   p.assets[assetId].beats = beats;
 }
@@ -726,9 +737,17 @@ export function applyLayout(p: Project, layout: Layout, reference: MediaAsset, s
   }
   const [, H] = outputSize(p.aspect, 1080); // text sizes are pixels on a frame whose short side is 1080
   for (const t of layout.texts) {
-    const size = clamp(Math.round(t.h * H * 1.1), 16, 240); // the letters' ink is about 0.9 of the font size
-    const id = addText(p, 0, 'ใส่ข้อความ', { ...SUBTITLE, colour: `${t.fill}ff`, size, stroke: t.stroke ? { colour: `${t.stroke}ff`, width: Math.max(4, Math.round(size * 0.1)) } : null });
-    updateText(p, id, { transform: { x: t.cx, y: t.cy } });
+    const text = t.text?.trim() || 'ใส่ข้อความ'; // the words read off the reference, to edit
+    // The letters' ink is about 0.9 of the font size; on a label it is about half the box's height.
+    const size = clamp(Math.round((t.h * H * (t.background ? 0.6 : 1.1)) / text.split('\n').length), 16, 240);
+    const id = addText(p, 0, text, {
+      ...SUBTITLE,
+      colour: `${t.fill}ff`,
+      size,
+      stroke: t.stroke ? { colour: `${t.stroke}ff`, width: Math.max(4, Math.round(size * 0.1)) } : null,
+      background: t.background ? { colour: `${t.background}ff`, radius: 8 } : null,
+    });
+    updateText(p, id, { transform: { x: t.cx, y: t.cy, rotation: t.angle } });
   }
 }
 

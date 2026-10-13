@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "tokens": "node scripts/tokens.mjs",
-    "dev": "npm run tokens && vite",
-    "build": "npm run tokens && tsc --noEmit && vite build",
+    "dev": "npm run tokens && node scripts/ocr.mjs && vite",
+    "build": "npm run tokens && node scripts/ocr.mjs && tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --experimental-strip-types --test src/*.test.ts"
   },
@@ -25,12 +25,15 @@
     "@fontsource/sriracha": "5.3.0",
     "@huggingface/transformers": "4.3.0",
     "@mediapipe/tasks-vision": "1.0.1",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/tha": "1.0.0",
     "idb-keyval": "6.3.0",
     "lucide-react": "1.55.0",
     "mediabunny": "1.61.4",
     "onnxruntime-web": "1.31.0-dev.20260914-8d85527a0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "@capacitor/cli": "8.5.3",

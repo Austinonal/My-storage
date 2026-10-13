@@ -289,8 +289,14 @@ export function renderFrame(ctx: Ctx, W: number, H: number, p: Project, t: Us, f
   const behind = texts.filter((c) => c.behind);
   for (const c of behind) boxes.push(drawText(ctx, W, H, c, t - c.start));
   if (behind.length) for (const v of main) drawMedia(ctx, W, H, p, v, frames.get(v.clip.id)!, false, true);
-  for (const v of visible) if (!v.main) boxes.push(drawMedia(ctx, W, H, p, v, frames.get(v.clip.id)!, false));
-  for (const c of texts) if (!c.behind) boxes.push(drawText(ctx, W, H, c, t - c.start));
+  // Overlays and text in track order, bottom to top, so a layer can be moved above or below another.
+  for (const track of p.tracks) {
+    for (const c of track.clips) {
+      const v = c.kind === 'video' || c.kind === 'photo' ? visible.find((x) => !x.main && x.clip === c) : undefined;
+      if (v) boxes.push(drawMedia(ctx, W, H, p, v, frames.get(c.id)!, false));
+      else if (c.kind === 'text' && !c.behind && texts.includes(c)) boxes.push(drawText(ctx, W, H, c, t - c.start));
+    }
+  }
   applyEffects(ctx, W, H, p, t);
   ctx.restore();
   return boxes;

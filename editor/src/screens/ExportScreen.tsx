@@ -27,6 +27,7 @@ export function ExportScreen({ id }: { id: string }) {
   const [found, setFound] = useState<boolean | null>(null);
   const [height, setHeight] = useState<ExportSettings['height']>(project?.id === id && project.still ? 720 : 1080); // thumbnails: 1280 x 720
   const [fps, setFps] = useState<Fps | null>(null);
+  const [png, setPng] = useState(false);
   const [job, setJob] = useState<Job>({ state: 'idle' });
   const [saved, setSaved] = useState('');
   const abort = useRef<AbortController | null>(null);
@@ -49,7 +50,7 @@ export function ExportScreen({ id }: { id: string }) {
     // Android pauses a backgrounded app, which stalls the export, so keep the screen on.
     const lock = await navigator.wakeLock?.request('screen').catch(() => undefined);
     try {
-      if (p.still) return setJob({ state: 'done', file: await exportStill(p, height) });
+      if (p.still) return setJob({ state: 'done', file: await exportStill(p, height, png ? 'image/png' : 'image/jpeg') });
       const file = await exportProject(
         p,
         { height, fps: fps ?? p.fps, bitrate: 'high', codec: 'avc' },
@@ -108,6 +109,13 @@ export function ExportScreen({ id }: { id: string }) {
             {w} × {h}
           </p>
         </fieldset>
+        {p?.still && (
+          <fieldset disabled={busy} className="flex flex-col gap-2">
+            <legend className="text-sm">ไฟล์</legend>
+            <CategoryTabs items={['JPEG', 'PNG']} value={png ? 'PNG' : 'JPEG'} onChange={(v) => setPng(v === 'PNG')} />
+            <p className="text-xs text-muted">{png ? 'PNG: คมที่สุด ไฟล์ใหญ่กว่า' : 'JPEG: ไฟล์เล็ก เหมาะกับ YouTube (ไม่เกิน 2 MB)'}</p>
+          </fieldset>
+        )}
         {!p?.still && <fieldset disabled={busy} className="flex flex-col gap-2">
           <legend className="text-sm">เฟรมเรต (fps)</legend>
           <CategoryTabs

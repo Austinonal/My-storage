@@ -6,7 +6,7 @@ import { SPEED_PRESETS } from '../timing.ts';
 import { TRANSITIONS } from '../transitions';
 import { VOICES } from '../voice';
 import { EFFECTS } from '../effects';
-import { SEC, addEffect, extractAudio, formatTime, projectDuration, setBeats, setCrop, setCutout, setCurve, setEffect, setFades, setSpeed, setTransition, setVoice, setVolume, syncToBeats } from '../timeline.ts';
+import { SEC, SUBTITLE, addEffect, addText, extractAudio, formatTime, projectDuration, setBeats, setCrop, setCutout, updateText, setCurve, setEffect, setFades, setSpeed, setTransition, setVoice, setVolume, syncToBeats } from '../timeline.ts';
 import { findBeats } from '../sound.ts';
 import { monoOf } from '../thumbs';
 import { loadSegmenter } from '../segment';
@@ -538,6 +538,32 @@ export function CutoutSheet({ open, onClose, clip, onPickImage }: { open: boolea
               ? 'เปิดตัวแยกคนไม่สำเร็จ ลองใหม่อีกครั้ง'
               : 'แยกคนออกจากพื้นหลังบนเครื่องนี้ ได้ผลดีกับคลิปที่เห็นคนชัดๆ · ภาพซ้อนที่ลบพื้นหลังจะเห็นวิดีโอหลักอยู่ข้างหลัง'}
         </p>
+      </div>
+    </BottomSheet>
+  );
+}
+
+// ---- stickers: big emoji and symbols, added as text layers so they move, turn, stack and export like text ----
+
+const STICKERS = ['😱', '🔥', '👉', '👈', '👇', '⬆️', '❗', '❓', '✅', '❌', '⭐', '💯', '😂', '😍', '🤯', '💰', '🎉', '❤️', '👍', '🆕', '🔴', '⚡', '🏆', '📌'];
+
+export function StickerSheet({ open, onClose, at, onAdded }: { open: boolean; onClose: () => void; at: Us; onAdded: (id: string) => void }) {
+  function add(emoji: string) {
+    let id = '';
+    edit((d) => {
+      id = addText(d, at, emoji, { ...SUBTITLE, size: 160, stroke: null, shadow: { colour: '#00000066', blur: 12, dx: 0, dy: 6 } });
+      updateText(d, id, { transform: { x: 0.5, y: 0.5 } });
+    });
+    onAdded(id);
+  }
+  return (
+    <BottomSheet open={open} title="สติกเกอร์" onClose={onClose} modal={false}>
+      <div className="grid grid-cols-6 gap-2">
+        {STICKERS.map((e) => (
+          <button key={e} aria-label={`สติกเกอร์ ${e}`} onClick={() => add(e)} className={`grid h-12 place-items-center rounded-md bg-raised text-2xl ${focus}`}>
+            {e}
+          </button>
+        ))}
       </div>
     </BottomSheet>
   );

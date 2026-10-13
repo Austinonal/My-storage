@@ -39,7 +39,7 @@ Import custom font file,text,should,yes,no,Play listing custom fonts
 Auto captions from speech,text,should,yes,yes,"Whisper base (q8, about 80 MB, downloaded once from the model hub, then offline) in a worker; Thai or English; long lines split between words; Thai accuracy not measured here (no Thai speech to test with)"
 Text to speech voices,text,should,yes,no,Android TTS; v2
 Bilingual captions and filler-word removal,text,could,yes,no,
-Stickers layer,stickers,should,yes,no,our own or open-licence stickers only
+Stickers layer,stickers,should,yes,partial,"24 emoji and symbols as layers (move, turn, size, order), in thumbnails and clips; no drawn sticker packs or animated stickers"
 Add music from own files,audio,must,yes,yes,placed at the playhead on its own track; drag or arrow keys to move in time
 Extract audio from a video,audio,must,yes,yes,add sound accepts a video file and uses only its sound
 Record voiceover,audio,must,yes,yes,MediaRecorder; the video plays silently while you speak; lands at the playhead
@@ -89,5 +89,5 @@ Remove silences automatically,audio,should,yes,yes,"one tap on a main-track vide
 Object tracking for text and overlays,effects,should,yes,yes,"tap a spot: the main track is rendered small and a square is matched frame to frame (10 per second); the result is position keyframes you can edit"
 Auto reframe to another aspect,canvas,should,yes,yes,"clips wider than the frame zoom to fill it and slide to keep the person centred (person found every 0.25 s, smoothed, keyframes every 0.5 s); not for quarter-turned clips"
 Text behind a person,text,could,yes,yes,switch in the text position tab; the person from the main video is drawn again over the text
-Thumbnail (cover image) projects,thumbnails,should,no,yes,"our own addition: home chooses clips or thumbnails; a thumbnail is one picture (background fills the frame, picture overlays, text, cutout, filters, effects) edited with a layer list and saved as a JPEG (1280 x 720 by default) to the gallery"
-Thumbnail from any reference picture,thumbnails,should,no,yes,"our own addition: finds the person (cutout model) and big text (edge-crowded blocks of two or three flat colours) in any picture, then lays out a person slot (cut out once filled), text in the same colours and size, the same shape, and the reference colours on the background"
+Thumbnail (cover image) projects,thumbnails,should,no,yes,"our own addition: home chooses clips or thumbnails; a thumbnail is one picture (background fills the frame, picture overlays, text, stickers, cutout, filters, effects) edited with a layer list (move a layer up or down) and saved as a JPEG or PNG (1280 x 720 by default) to the gallery"
+Thumbnail from any reference picture,thumbnails,should,no,yes,"our own addition: finds the person (cutout model) and big text (edge-crowded blocks of two or three flat colours, labels, tilted text, text over the person) in any picture and reads the words on the device (Tesseract, Thai + English, bundled); lays out a person slot (cut out once filled), the words in the same colours, size and slant, the same shape, and the reference colours on the background"

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, AudioLines, Captions, Crop, Diamond, Drum, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, UserRound, Volume2, WandSparkles, Zap, Crosshair, ScanFace, ScanSearch } from 'lucide-react';
+import { ArrowLeft, AudioLines, Captions, Crop, Diamond, Drum, Gauge, Gem, Mic, Ratio, Rewind, Snowflake, ImagePlus, Layers, Move, Music, Palette, Pause, Play, Redo2, Replace, Scissors, SlidersHorizontal, Sparkles, SunMedium, Trash2, Type, Undo2, Upload, UserRound, Volume2, WandSparkles, Zap, Crosshair, ScanFace, ScanSearch, Smile, ArrowUp, ArrowDown } from 'lucide-react';
 import { BottomSheet, BottomToolbar, Button, Slider, Swatches, ToolButton, TopBar } from '../ui';
 import { edit, openProject, redo, undo, useEditor } from '../store';
 import { importMedia, openMedia, storeMedia } from '../media';
@@ -30,6 +30,7 @@ import {
   setAspect,
   setCanvas,
   setCutout,
+  moveLayer,
   coverMain,
   applyLayout,
   setFollow,
@@ -53,7 +54,7 @@ import { TemplateSheet } from './TemplateSheet';
 import { TextSheet } from './TextSheet';
 import { CaptionSheet } from './CaptionSheet';
 import { QualitySheet } from './QualitySheet';
-import { BeatSheet, CropSheet, CutoutSheet, EffectSheet, SoundSheet, SpeedSheet, TransitionSheet, VoiceoverSheet } from './ClipTools';
+import { BeatSheet, CropSheet, CutoutSheet, EffectSheet, StickerSheet, SoundSheet, SpeedSheet, TransitionSheet, VoiceoverSheet } from './ClipTools';
 import { monoOf } from '../thumbs';
 import { speechRanges } from '../sound.ts';
 import { personPath, trackSpot } from '../follow';
@@ -64,7 +65,7 @@ import { ColourSheet, type ColourTab } from './ColourSheet';
 import { importMessage } from './Home';
 import type { AudioClip, Easing, MediaAsset, MediaClip, Project, TextClip, Transform } from '../schema';
 
-type Sheet = 'anim' | 'trim' | 'sound' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | 'speed' | 'crop' | 'transition' | 'voiceover' | 'effect' | 'beat' | 'cutout' | 'track' | null;
+type Sheet = 'anim' | 'trim' | 'sound' | 'template' | 'text' | 'colour' | 'place' | 'captions' | 'quality' | 'canvas' | 'speed' | 'crop' | 'transition' | 'voiceover' | 'effect' | 'beat' | 'cutout' | 'track' | 'sticker' | null;
 type Point = { x: number; y: number };
 const pinchOf = (a: Point, b: Point) => ({ d: Math.hypot(b.x - a.x, b.y - a.y), a: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -288,13 +289,14 @@ export function Editor({ id }: { id: string }) {
   }
 
   // New text sits at the playhead and copies the look of the text before it, so a run of subtitles stays consistent.
+  // On a thumbnail it starts plain in the middle instead (the text before it may be a sticker or a heading elsewhere).
   function newText(at: number, from?: TextClip) {
     if (!p) return;
-    const before = from ?? (p.tracks.flatMap((t) => t.clips).filter((c) => c.kind === 'text' && c.start <= at) as TextClip[]).sort((x, y) => x.start - y.start).at(-1);
+    const before = thumb ? undefined : from ?? (p.tracks.flatMap((t) => t.clips).filter((c) => c.kind === 'text' && c.start <= at) as TextClip[]).sort((x, y) => x.start - y.start).at(-1);
     let newId = '';
     edit((d) => {
       newId = addText(d, at, 'ข้อความ', before?.style, before ? before.duration / SEC : 3);
-      if (before) updateText(d, newId, { transform: before.transform });
+      if (before || thumb) updateText(d, newId, { transform: before?.transform ?? { x: 0.5, y: 0.5 } });
     });
     setSelectedId(newId);
     setSheet('text');
@@ -507,7 +509,7 @@ export function Editor({ id }: { id: string }) {
     setBusyText('กำลังวิเคราะห์รูปต้นแบบ…');
     setNotice('');
     try {
-      const layout = await analyzeThumbnail(file);
+      const layout = await analyzeThumbnail(file, setBusyText);
       const { reference, slot } = await layoutAssets(p.id, file, layout);
       const main = p.tracks[0].clips[0] as MediaClip;
       const look = p.assets[main.assetId].placeholder ? null : await makeMatch(file, main, p.assets[main.assetId]);
@@ -516,7 +518,7 @@ export function Editor({ id }: { id: string }) {
         if (look) setMatch(d, main.id, { ...look, intensity: 0.7 });
       });
       setSelectedId(null);
-      setNotice(`วางตามต้นแบบแล้ว: ${layout.person ? 'ช่องคน 1 ช่อง, ' : ''}ข้อความ ${layout.texts.length} จุด${look ? ', โทนสีตามต้นแบบ' : ''}${layout.person ? ' · แตะ “ช่องรูป (ว่าง)” แล้วกด “แทนที่” ใส่รูปคนของคุณ' : ''}`);
+      setNotice(`วางตามต้นแบบแล้ว: ${layout.person ? 'ช่องคน 1 ช่อง, ' : ''}ข้อความ ${layout.texts.length} จุด${layout.texts.some((t) => t.text) ? ' (อ่านคำมาให้แล้ว แก้ได้)' : ''}${look ? ', โทนสีตามต้นแบบ' : ''}${layout.person ? ' · แตะ “ช่องรูป (ว่าง)” แล้วกด “แทนที่” ใส่รูปคนของคุณ' : ''}`);
     } catch (e) {
       setNotice(`อ่านรูปต้นแบบไม่สำเร็จ: ${importMessage(e)}`);
     } finally {
@@ -715,6 +717,7 @@ export function Editor({ id }: { id: string }) {
           <>
             <ToolButton icon={ImagePlus} label="เพิ่มรูป" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
             <ToolButton icon={Type} label="ข้อความ" disabled={!p || busy} onClick={() => newText(0)} />
+            <ToolButton icon={Smile} label="สติกเกอร์" disabled={!p || busy} active={sheet === 'sticker'} onClick={() => setSheet('sticker')} />
             <ToolButton icon={ScanSearch} label="ทำตามต้นแบบ" disabled={!p || busy} onClick={() => referenceInput.current?.click()} />
             <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
             <ToolButton icon={Zap} label="เอฟเฟกต์" disabled={!p || busy} active={sheet === 'effect'} onClick={() => setSheet('effect')} />
@@ -729,6 +732,7 @@ export function Editor({ id }: { id: string }) {
             <ToolButton icon={Ratio} label="อัตราส่วน" disabled={!p || busy} active={sheet === 'canvas'} onClick={() => setSheet('canvas')} />
             <ToolButton icon={Captions} label="คำบรรยาย" disabled={!p || busy} active={sheet === 'captions'} onClick={() => setSheet('captions')} />
             <ToolButton icon={Layers} label="ภาพซ้อน" disabled={!p || busy} onClick={() => overlayInput.current?.click()} />
+            <ToolButton icon={Smile} label="สติกเกอร์" disabled={!p || busy} active={sheet === 'sticker'} onClick={() => setSheet('sticker')} />
             <ToolButton icon={Zap} label="เอฟเฟกต์" disabled={!p || busy} active={sheet === 'effect'} onClick={() => setSheet('effect')} />
             <ToolButton icon={WandSparkles} label="เทมเพลต" disabled={!p || busy} active={sheet === 'template'} onClick={() => setSheet('template')} />
           </>
@@ -738,6 +742,8 @@ export function Editor({ id }: { id: string }) {
             {visual && <ToolButton icon={Replace} label="แทนที่" disabled={busy} active={!!p?.assets[visual.assetId].placeholder} onClick={() => replaceInput.current?.click()} />}
             {textSel && <ToolButton icon={Type} label="แก้ไข" active={sheet === 'text'} onClick={() => setSheet('text')} />}
             {!thumb && (textSel || overlaySel) && <ToolButton icon={Crosshair} label="ติดตาม" disabled={busy} active={sheet === 'track'} onClick={() => setSheet('track')} />}
+            {thumb && !mainSel && sel.kind !== 'effect' && <ToolButton icon={ArrowUp} label="เลื่อนขึ้น" onClick={() => edit((d) => void moveLayer(d, sel.id, 1))} />}
+            {thumb && !mainSel && sel.kind !== 'effect' && <ToolButton icon={ArrowDown} label="เลื่อนลง" onClick={() => edit((d) => void moveLayer(d, sel.id, -1))} />}
             {sel.kind === 'effect' && <ToolButton icon={Zap} label="เปลี่ยนเอฟเฟกต์" active={sheet === 'effect'} onClick={() => setSheet('effect')} />}
             {visual && <ToolButton icon={Move} label="จัดวาง" active={sheet === 'place'} onClick={() => setSheet('place')} />}
             {!thumb && (sel.kind === 'video' || sel.kind === 'audio') && <ToolButton icon={Gauge} label="ความเร็ว" active={sheet === 'speed'} onClick={() => setSheet('speed')} />}
@@ -929,6 +935,7 @@ export function Editor({ id }: { id: string }) {
           <p className="mt-1 text-xs text-muted">เริ่มจากตำแหน่งเส้นเวลาตอนนี้ไปจนจบคลิป · ได้ผลดีกับสิ่งที่มีลวดลายชัดๆ ตำแหน่งที่ได้เป็นคีย์เฟรม แก้ต่อได้</p>
         </BottomSheet>
       )}
+      {p && <StickerSheet open={sheet === 'sticker'} onClose={() => setSheet(null)} at={thumb ? 0 : Math.min(time, Math.max(0, total - SEC))} onAdded={setSelectedId} />}
       {p && <EffectSheet open={sheet === 'effect'} onClose={() => setSheet(null)} project={p} clip={sel?.kind === 'effect' ? sel : null} time={time} onAdded={setSelectedId} />}
       {p && textSel && (
         <TextSheet

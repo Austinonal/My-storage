@@ -2,6 +2,33 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — thumbnails: layer order, stickers, PNG; reading the reference better (parity 84.4, must-haves 33 of 34)
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| Layer order | done | dragging layers in the list | the renderer drew all text after all pictures; it now draws pictures and text in track order (video projects look the same, their overlays already sit below text) |
+| Stickers | partial | drawn sticker packs, animated stickers | none: an emoji is a text layer |
+| PNG | done | none | none |
+| Reference reading | done | Thai display fonts are read with small mistakes; "5" in some fonts reads as "S" | a label's rim (JPEG-darkened blue next to yellow) was drawn as letters; a spot at the picture's edge counted the area past it as black; a level word touching a collar looked tilted |
+
+- **Layers**: "เลื่อนขึ้น" / "เลื่อนลง" on a selected picture or text; text can now sit under a picture.
+- **Stickers** ("สติกเกอร์", in thumbnails and in the clip editor): 24 emoji and symbols, added as layers.
+- **Export**: JPEG or PNG.
+- **Reading the reference**: up to 8 text spots; tilted text keeps its slant; labels (letters on a filled box) keep the box; text over the person is found; every spot is read on the device (Tesseract, Thai + English, about 8 MB bundled, offline) and a spot that reads as nothing is dropped (busy textures); the words go into the text layer, sized and placed by the read lines.
+- Measured on a reference made in the app (5 texts) and a gravel background with no text:
+
+  | | truth | found |
+  | --- | --- | --- |
+  | TOP 5 (yellow, black outline) | 0.25, 0.22 | 0.25, 0.20, read "TOPS" |
+  | ห้ามพลาด! (white, red outline, -10°) | 0.27, 0.62, -10° | 0.27, 0.60, -9°, read "ทห้ามพลาด!" |
+  | สุดยอด (over the person) | 0.74, 0.86 | 0.74, 0.87, read "สุดยอด" |
+  | 2026 (dark on a yellow label) | 0.90, 0.10 | 0.90, 0.10, label kept, read "2026" |
+  | รีวิว (yellow, black outline) | 0.30, 0.88 | 0.30, 0.86, read "รีวิว" |
+  | gravel, no text | 0 | 0 (with or without the reader) |
+
+  Before this round the same picture gave 4 unread spots (the one over the person missed, the label in the wrong colours, no slant). Analysis took about 2.3 s here.
+- Checked: 74 unit tests; the thumbnail suites (made by hand, from a reference, stickers, layer order, PNG) and the clip suites, zero errors.
+
 ## 2026-10-13 — thumbnails, and thumbnails laid out like any picture (our own addition)
 
 | ID | status | missing | harder than expected |

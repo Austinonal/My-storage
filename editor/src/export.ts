@@ -106,8 +106,8 @@ function inWorker(p: Project, s: ExportSettings, mixed: MixedAudio | null, onPro
 export type WorkerStart = { type: 'start'; project: Project; settings: ExportSettings; audio: MixedAudio | null };
 export type WorkerReply = { type: 'progress'; value: number } | { type: 'done' } | { type: 'error'; name: string; message: string; code?: ExportError['code'] };
 
-// A thumbnail: the frame at time 0 as a JPEG (YouTube takes up to 2 MB; 1280 x 720 at this quality is far below).
-export async function exportStill(p: Project, height: number): Promise<File> {
+// A thumbnail: the frame at time 0 as a JPEG (YouTube takes up to 2 MB; 1280 x 720 at this quality is far below) or a PNG.
+export async function exportStill(p: Project, height: number, type: 'image/jpeg' | 'image/png' = 'image/jpeg'): Promise<File> {
   const [width, h] = outputSize(p.aspect, height);
   await Promise.all([loadFonts(), prepareLuts(p), preparePerson(p)]);
   const canvas = new OffscreenCanvas(width, h);
@@ -117,7 +117,7 @@ export async function exportStill(p: Project, height: number): Promise<File> {
   } finally {
     feed.dispose();
   }
-  return new File([await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })], `${p.name}.jpg`, { type: 'image/jpeg' });
+  return new File([await canvas.convertToBlob({ type, quality: 0.92 })], `${p.name}.${type === 'image/png' ? 'png' : 'jpg'}`, { type });
 }
 
 // Renders every frame and writes the finished MP4 into the project's export file.
