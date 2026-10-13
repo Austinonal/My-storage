@@ -4,6 +4,7 @@ import { Button, CategoryTabs, ProgressPanel, TopBar } from '../ui';
 import { openProject, useEditor } from '../store';
 import { ExportError, exportProject } from '../export';
 import { outputSize } from '../timeline.ts';
+import { saveVideo } from '../save';
 import type { ExportSettings, Fps } from '../schema';
 
 type Job =
@@ -19,21 +20,13 @@ function exportMessage(e: unknown) {
   return `ส่งออกไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`;
 }
 
-function download(file: File, name: string) {
-  const url = URL.createObjectURL(file);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${name}.mp4`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
 export function ExportScreen({ id }: { id: string }) {
   const { project } = useEditor();
   const [found, setFound] = useState<boolean | null>(null);
   const [height, setHeight] = useState<ExportSettings['height']>(1080);
   const [fps, setFps] = useState<Fps | null>(null);
   const [job, setJob] = useState<Job>({ state: 'idle' });
+  const [saved, setSaved] = useState('');
   const abort = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -49,6 +42,7 @@ export function ExportScreen({ id }: { id: string }) {
     const ac = new AbortController();
     abort.current = ac;
     setJob({ state: 'running', progress: 0 });
+    setSaved('');
     let shown = 0;
     // Android pauses a backgrounded app, which stalls the export, so keep the screen on.
     const lock = await navigator.wakeLock?.request('screen').catch(() => undefined);
@@ -67,6 +61,16 @@ export function ExportScreen({ id }: { id: string }) {
       setJob(ac.signal.aborted ? { state: 'idle' } : { state: 'failed', message: exportMessage(e) });
     } finally {
       void lock?.release();
+    }
+  }
+
+  async function save(file: File) {
+    setSaved('กำลังบันทึก…');
+    try {
+      const where = await saveVideo(file, p?.name ?? 'video');
+      setSaved(where ? `บันทึกแล้วที่ ${where}` : '');
+    } catch (e) {
+      setSaved(`บันทึกไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`);
     }
   }
 
@@ -131,10 +135,10 @@ export function ExportScreen({ id }: { id: string }) {
             title="ส่งออกเสร็จแล้ว"
             value={1}
             state="done"
-            message={`${(file.size / 1e6).toFixed(1)} MB`}
+            message={saved || `${(file.size / 1e6).toFixed(1)} MB`}
             actions={
               <>
-                <Button onClick={() => download(file, p?.name ?? 'video')}>บันทึกลงเครื่อง</Button>
+                <Button onClick={() => void save(file)}>บันทึกลงเครื่อง</Button>
                 {canShare && (
                   <Button variant="secondary" onClick={() => void navigator.share({ files: [file] }).catch(() => {})}>
                     แชร์
