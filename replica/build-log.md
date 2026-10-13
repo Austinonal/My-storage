@@ -2,6 +2,14 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — CI: APK + web on GitHub
+
+- `.github/workflows/editor.yml`, on every push to the default branch: tests + build (`web`), deploy `editor/dist` to GitHub Pages (`pages`), and a Capacitor debug APK (`android`) attached to the rolling `editor-latest` release.
+- The Android project is generated in CI (`npx cap add android`) from the pinned `@capacitor/android`, not committed. Commit it once it needs native edits (permissions, icons).
+- In the APK, "save" writes the export to the phone's public **Documents** folder in 3 MB chunks (the WebView cannot download blobs). No permission prompt on Android 11+; Android 10 and older are not supported for saving.
+- Pages needs a one-time switch by the repo owner: Settings → Pages → Source: GitHub Actions. Until then the `pages` job fails with 404.
+- Not verified yet: the APK on a real phone (file picker, OPFS, WebCodecs H.264 in the WebView, export speed, the saved file showing up in Files/Gallery).
+
 ## 2026-10-13 — clip animations In / Out / Combo (S24)
 
 | ID | status | missing | harder than expected |
