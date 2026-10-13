@@ -3,7 +3,7 @@ New project from gallery clips and photos,project,must,yes,yes,"pick several vid
 Drafts list with auto-save and reopen,project,must,yes,partial,"list, autosave (500 ms + flush on hide) and reopen work; no cover thumbnail yet"
 Rename duplicate delete a draft,project,should,yes,no,long-press on draft card (guess)
 Missing source media warning on reopen,project,should,unknown,partial,editor shows a message; the drafts list does not flag it yet
-Multi-track timeline with pinch zoom and scrub,timeline,must,yes,yes,"main + audio + text tracks, scroll to scrub, pinch / ctrl+wheel / buttons zoom, filmstrip pictures on clips"
+Multi-track timeline with pinch zoom and scrub,timeline,must,yes,yes,"main + overlay + audio + text tracks, scroll to scrub, pinch / ctrl+wheel / buttons zoom, filmstrip pictures on clips"
 Play pause and timecode on preview,timeline,must,yes,yes,stops at the trim out point
 Trim clip by dragging edges,timeline,must,yes,yes,"edge handles on the selected clip (video, photo, audio, text) plus the trim sheet; one undo step per drag"
 Split clip at playhead,timeline,must,yes,yes,"video, photo and audio clips"
@@ -20,7 +20,7 @@ Freeze frame,clip,should,yes,no,Play listing
 Crop rotate mirror,clip,must,yes,no,S23
 Clip volume and mute,clip,must,yes,partial,0-200 % (0 = mute); preview caps at 100 %
 Clip In Out Combo animations,clip,should,yes,yes,"291 own presets (100 in / 86 out / 105 combo), live tile previews, duration slider; art/particle presets not built"
-Stabilize,clip,could,yes,no,heavy compute
+Stabilize,clip,could,yes,yes,light / strong; see Video quality row
 Keyframes for position scale rotation opacity,keyframes,must,yes,no,Play listing source 6
 Keyframe easing curves,keyframes,should,yes,no,
 Keyframes on filter adjust volume mask,keyframes,could,unknown,no,guess
@@ -54,12 +54,12 @@ Audio speed with pitch preserved,audio,should,unknown,no,
 Filters with intensity,colour,must,yes,yes,24 of our own 3D LUT looks + import your .cube files; intensity 0-100 %
 Adjust brightness contrast saturation exposure,colour,must,yes,yes,WebGL2 pass shared by preview and export
 Adjust sharpen highlights shadows temperature tint,colour,should,yes,yes,same pass
-HSL and curves,colour,could,yes,no,
+HSL and curves,colour,could,yes,yes,"HSL for 8 colours (hue, saturation, lightness), RGB + per-channel curves, 3 colour wheels, colour match from a photo or clip"
 Apply filter or adjust to all clips or as a timeline layer,colour,should,yes,partial,"""apply to all clips"" button; no filter layer on the timeline"
 Video effects (glitch blur VHS light leak shake zoom),effects,should,yes,no,our own shaders; v2
 Body effects that follow a person,effects,could,yes,no,needs segmentation model
-Overlay picture-in-picture,overlay,should,yes,no,v2
-Opacity and blend modes,overlay,should,yes,no,v2
+Overlay picture-in-picture,overlay,should,yes,yes,"photo and video overlays on their own tracks under text; drag / pinch / turn on the preview; filters, adjust, animations; exported with one decoder per overlay"
+Opacity and blend modes,overlay,should,yes,partial,opacity yes; no blend modes
 Mask shapes with feather and invert,overlay,should,yes,no,v2
 Chroma key,overlay,should,yes,no,Play listing; v2
 Auto background removal,overlay,could,yes,no,needs segmentation model
@@ -67,7 +67,7 @@ Aspect ratio presets 9:16 16:9 1:1 3:4 4:3,canvas,must,yes,no,S19
 Canvas colour and blur background,canvas,must,yes,no,S20
 Canvas image background,canvas,could,yes,no,
 Export 720p and 1080p,export,must,yes,yes,H.264 preferred; test Chromium fell back to VP9/Opus - confirm H.264/AAC on the phone
-Export 2K and 4K,export,should,yes,no,phone-dependent
+Export 2K and 4K,export,should,yes,yes,"2K exported and probed (1440x2560); 4K offered, depends on the phone encoder (clear message when it cannot)"
 Export frame rate 24 25 30 50 60,export,must,yes,yes,"1080p 60 fps exported and probed (1080x1920, 60/1)"
 Export bitrate low medium high,export,should,yes,no,
 Export progress cancel and save to gallery,export,must,yes,yes,export runs in a worker; APK saves to the gallery album Movies/Editor (falls back to Documents); not yet confirmed on a phone
@@ -82,3 +82,6 @@ TikTok direct post,sharing,skip,yes,skip,partner integration; share sheet covers
 Pro subscription and paywall,payments,skip,yes,skip,personal app has no paywall; never bypass the real one
 Watermark and ending clip,export,skip,yes,skip,not needed
 Build a template from any edited clip (cuts + In/Out/Combo),templates,should,no,yes,"our own addition: on-device analysis, own clips fill the slots in order, the rest become placeholders to replace"
+Adjust ambient light clarity whites blacks fade vignette,colour,should,yes,yes,same WebGL2 pass
+Video quality: enhance stabilize deflicker,clip,should,yes,yes,enhance = auto levels + crispness; stabilize light/strong from a per-frame drift record (shake 10.2 -> 3.5 px/frame on a test clip); deflicker evens brightness (21 -> 2 per frame); no AI upscaling
+"Captions list, paste lines, import srt vtt",text,should,yes,yes,all captions in one list; pasted lines become back-to-back captions; .srt / .vtt import

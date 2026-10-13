@@ -2,6 +2,25 @@
 
 Parity after each milestone comes from `python3 .claude/skills/replica-diff/parity.py replica/features.csv`.
 
+## 2026-10-13 — phone fixes, ปรับแก้, picture in picture, captions, video quality
+
+| ID | status | missing | harder than expected |
+| --- | --- | --- | --- |
+| Safe areas | done | landscape not checked | Android 15 draws apps under the status and navigation bars; the export button sat under the clock. Capacitor 8 passes the bar sizes as CSS variables; the top bar, toolbars and sheets now pad by them |
+| S18 ปรับแก้ | done | keyframes on adjust | none |
+| Colour match | done | per-shot matching inside one clip | none |
+| Overlay (PiP) | done | blend modes, masks, chroma key | the export decoded one clip at a time; overlays need their own decoders pulled in step with the main track |
+| Captions | done | speech-to-text (needs an on-device model) | none |
+| Video quality | done | AI upscaling ("Ultra HD" in the original needs a model and a server) | none |
+
+- **Phone layout**: everything that can be tapped now clears the status bar and the navigation buttons (checked with simulated 36 px / 48 px bars: no button underneath); status bar icons are light on the dark app.
+- **ปรับแก้**: 15 sliders (brightness, exposure, contrast, saturation, ambient light, sharpen = fine detail, clarity = overall local contrast, highlights, shadows, whites, blacks, temperature, tint, fade, vignette), HSL for 8 colours × hue/saturation/lightness, curves (white = all channels, red, green, blue; tap to add, drag off to remove, keyboard arrows), colour wheels for shadows / midtones / highlights with a brightness slider each, and colour match: pick any photo or clip and the clip takes on its colours (Lab statistics transfer baked into a LUT; a flat blue reference gives exactly its colour, 32,80,192).
+- **Picture in picture**: "ภาพซ้อน" adds a photo or video at the playhead on an overlay track (under text). Drag and pinch on the preview, or size / turn / opacity in "จัดวาง"; every clip tool works on overlays (filters, ปรับแก้, animations, trim, split, volume, replace).
+- **Captions**: "คำบรรยาย" lists every caption with its time (tap to jump, edit, delete); paste many lines to make back-to-back captions of a chosen length; import .srt or .vtt. New captions copy the look of the latest one.
+- **Video quality** ("คุณภาพ"): enhance (auto levels from eight frames + a little sharpen, clarity, saturation), stabilize light / strong (records the picture's drift once per video, follows a smoothed path, zooms 6 % / 12 % to hide edges), deflicker (brightness gain to the local average), and 2K / 4K export.
+- Checked: 49 unit tests; 13 e2e suites in Chromium with zero errors; measured on exported files: shake 10.2 → 3.5 px per frame, flicker 21 → 2 brightness steps per frame, 2K = 1440×2560, overlays and colour match match the preview.
+- Not verified on a phone yet: everything above, plus 4K encoding (phone-dependent).
+
 ## 2026-10-13 — text, colour, a friendlier timeline, sharper templates, gallery save, worker export (parity 50.9, must-haves 22 of 34)
 
 | ID | status | missing | harder than expected |
