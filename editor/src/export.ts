@@ -1,6 +1,7 @@
 import {
   AudioBufferSink,
-  AudioBufferSource,
+  AudioSample,
+  AudioSampleSource,
   CanvasSink,
   CanvasSource,
   Mp4OutputFormat,
@@ -29,12 +30,79 @@ export class ExportError extends Error {
 const quality = { low: QUALITY_MEDIUM, medium: QUALITY_HIGH, high: QUALITY_VERY_HIGH };
 const SAMPLE_RATE = 48_000;
 
-export async function exportProject(
-  p: Project,
-  s: ExportSettings,
-  onProgress: (fraction: number) => void,
-  signal: AbortSignal,
-): Promise<File> {
+export interface MixedAudio {
+  channels: Float32Array[]; // left, right
+  sampleRate: number;
+}
+
+// The whole soundtrack, mixed. Main thread only: workers have no OfflineAudioContext.
+export async function prepareAudio(p: Project): Promise<MixedAudio | null> {
+  const total = projectDuration(p);
+  const audible = p.tracks
+    .filter((t) => !t.muted)
+    .flatMap((t) => t.clips)
+    .filter((c): c is MediaClip | AudioClip => (c.kind === 'video' || c.kind === 'audio') && p.assets[c.assetId].hasAudio && c.volume > 0 && c.start < total);
+  if (!audible.length) return null;
+  const buf = await mixAudio(p, audible, total);
+  return { channels: [buf.getChannelData(0), buf.getChannelData(1)], sampleRate: buf.sampleRate };
+}
+
+class WorkerUnavailable extends Error {}
+
+// Rendering runs in a worker so the app stays responsive; a WebView whose workers lack a needed API falls back to this thread.
+export async function exportProject(p: Project, s: ExportSettings, onProgress: (fraction: number) => void, signal: AbortSignal): Promise<File> {
+  const mixed = await prepareAudio(p);
+  signal.throwIfAborted();
+  try {
+    await inWorker(p, s, mixed, onProgress, signal);
+  } catch (e) {
+    if (!(e instanceof WorkerUnavailable)) throw e;
+    console.warn('export worker unavailable, rendering on the main thread:', e.message);
+    await renderVideo(p, s, mixed, onProgress, signal);
+  }
+  return (await exportFile(p.id)).getFile();
+}
+
+function inWorker(p: Project, s: ExportSettings, mixed: MixedAudio | null, onProgress: (fraction: number) => void, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    let w: Worker;
+    try {
+      w = new Worker(new URL('./export.worker.ts', import.meta.url), { type: 'module' });
+    } catch (e) {
+      return reject(new WorkerUnavailable(String(e)));
+    }
+    let started = false;
+    const cancel = () => w.postMessage({ type: 'cancel' });
+    const end = () => {
+      w.terminate();
+      signal.removeEventListener('abort', cancel);
+    };
+    signal.addEventListener('abort', cancel, { once: true });
+    w.onmessage = (e: MessageEvent<WorkerReply>) => {
+      const m = e.data;
+      if (m.type === 'progress') {
+        started = true;
+        return onProgress(m.value);
+      }
+      end();
+      if (m.type === 'done') resolve();
+      else if (!started && !signal.aborted && m.name !== 'AbortError') reject(new WorkerUnavailable(m.message));
+      else reject(m.code ? new ExportError(m.code) : m.name === 'Error' ? new Error(m.message) : new DOMException(m.message, m.name));
+    };
+    w.onerror = (e) => {
+      e.preventDefault();
+      end();
+      reject(started ? new Error(e.message) : new WorkerUnavailable(e.message));
+    };
+    w.postMessage({ type: 'start', project: p, settings: s, audio: mixed } satisfies WorkerStart);
+  });
+}
+
+export type WorkerStart = { type: 'start'; project: Project; settings: ExportSettings; audio: MixedAudio | null };
+export type WorkerReply = { type: 'progress'; value: number } | { type: 'done' } | { type: 'error'; name: string; message: string; code?: ExportError['code'] };
+
+// Renders every frame and writes the finished MP4 into the project's export file.
+export async function renderVideo(p: Project, s: ExportSettings, mixed: MixedAudio | null, onProgress: (fraction: number) => void, signal: AbortSignal) {
   const [width, height] = outputSize(p.aspect, s.height);
   const prefer: VideoCodec[] = s.codec === 'hevc' ? ['hevc', 'avc', 'vp9', 'av1'] : ['avc', 'hevc', 'vp9', 'av1'];
   const videoCodec = await getFirstEncodableVideoCodec(prefer, { width, height, frameRate: s.fps, quality: quality[s.bitrate] });
@@ -42,11 +110,7 @@ export async function exportProject(
 
   const clips = p.tracks[0].clips as MediaClip[];
   const total = projectDuration(p);
-  const audible = p.tracks
-    .filter((t) => !t.muted)
-    .flatMap((t) => t.clips)
-    .filter((c): c is MediaClip | AudioClip => (c.kind === 'video' || c.kind === 'audio') && p.assets[c.assetId].hasAudio && c.volume > 0 && c.start < total);
-  const audioCodec = audible.length ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: SAMPLE_RATE }) : null;
+  const audioCodec = mixed ? await getFirstEncodableAudioCodec(['aac', 'opus'], { numberOfChannels: 2, sampleRate: mixed.sampleRate }) : null;
 
   const handle = await exportFile(p.id);
   const output = new Output({ format: new Mp4OutputFormat(), target: new StreamTarget(await handle.createWritable()) });
@@ -54,14 +118,26 @@ export async function exportProject(
   const ctx = canvas.getContext('2d')!;
   const video = new CanvasSource(canvas, { codec: videoCodec, quality: quality[s.bitrate] });
   output.addVideoTrack(video, { frameRate: s.fps });
-  const audio = audioCodec ? new AudioBufferSource({ codec: audioCodec, quality: QUALITY_HIGH }) : null;
+  const audio = audioCodec ? new AudioSampleSource({ codec: audioCodec, quality: QUALITY_HIGH }) : null;
   if (audio) output.addAudioTrack(audio);
 
   try {
     await Promise.all([loadFonts(), prepareLuts(p)]);
     await output.start();
     // Audio goes in first: it is small, so the muxer can hold it while the video streams in.
-    if (audio) await audio.add(await mixAudio(p, audible, total));
+    if (audio && mixed) {
+      const [left, right] = mixed.channels;
+      const rate = mixed.sampleRate;
+      for (let at = 0; at < left.length; at += rate) {
+        const n = Math.min(rate, left.length - at);
+        const data = new Float32Array(n * 2);
+        data.set(left.subarray(at, at + n));
+        data.set(right.subarray(at, at + n), n);
+        const sample = new AudioSample({ data, format: 'f32-planar', numberOfChannels: 2, sampleRate: rate, timestamp: at / rate });
+        await audio.add(sample);
+        sample.close();
+      }
+    }
     const frames = Math.max(1, Math.round((total / SEC) * s.fps));
     const frameTime = (i: number) => Math.round((i * SEC) / s.fps);
     let i = 0;
@@ -106,7 +182,6 @@ export async function exportProject(
     await deleteExport(p.id);
     throw e;
   }
-  return handle.getFile();
 }
 
 // shortcut: renders the whole mix in memory (about 23 MB per stereo minute); render in chunks once exports run past a few minutes.

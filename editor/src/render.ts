@@ -9,7 +9,7 @@ type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 let mosaic: OffscreenCanvas | null = null;
 
 function sourceSize(img: CanvasImageSource): [number, number] {
-  if (img instanceof HTMLVideoElement) return [img.videoWidth, img.videoHeight];
+  if (typeof HTMLVideoElement !== 'undefined' && img instanceof HTMLVideoElement) return [img.videoWidth, img.videoHeight]; // no DOM in the export worker
   if (img instanceof VideoFrame) return [img.displayWidth, img.displayHeight];
   const s = img as { width: number | SVGAnimatedLength; height: number | SVGAnimatedLength };
   return [Number(s.width), Number(s.height)];

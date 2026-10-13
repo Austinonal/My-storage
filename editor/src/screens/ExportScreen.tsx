@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Button, CategoryTabs, ProgressPanel, TopBar } from '../ui';
 import { openProject, useEditor } from '../store';
 import { ExportError, exportProject } from '../export';
 import { outputSize } from '../timeline.ts';
-import { saveVideo } from '../save';
+import { canShare, saveVideo, shareVideo } from '../save';
 import type { ExportSettings, Fps } from '../schema';
 
 type Job =
@@ -74,13 +74,15 @@ export function ExportScreen({ id }: { id: string }) {
     }
   }
 
+  // One File per finished export, so the APK copies it to its cache once for both save and share.
+  const file = useMemo(() => (job.state === 'done' ? new File([job.file], `${p?.name ?? 'video'}.mp4`, { type: 'video/mp4' }) : null), [job, p?.name]);
+
   if (found === false) {
     return <p className="p-8 text-center text-sm text-muted">ไม่พบโปรเจกต์นี้</p>;
   }
 
   const [w, h] = p ? outputSize(p.aspect, height) : [0, 0];
-  const file = job.state === 'done' ? new File([job.file], `${p?.name ?? 'video'}.mp4`, { type: 'video/mp4' }) : null;
-  const canShare = !!file && !!navigator.canShare?.({ files: [file] });
+  const shareable = !!file && canShare(file);
   const busy = job.state === 'running';
 
   return (
@@ -120,7 +122,7 @@ export function ExportScreen({ id }: { id: string }) {
         )}
         {job.state === 'running' && (
           <ProgressPanel
-            title="กำลังส่งออก… อย่าปิดแอป"
+            title="กำลังส่งออก… เปิดหน้าจอไว้ อย่าสลับแอป"
             value={job.progress}
             state="running"
             actions={
@@ -142,8 +144,11 @@ export function ExportScreen({ id }: { id: string }) {
             actions={
               <>
                 <Button onClick={() => void save(file)}>บันทึกลงเครื่อง</Button>
-                {canShare && (
-                  <Button variant="secondary" onClick={() => void navigator.share({ files: [file] }).catch(() => {})}>
+                {shareable && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => void shareVideo(file, p?.name ?? 'video').catch((e) => setSaved(`แชร์ไม่สำเร็จ (${e instanceof Error ? e.message : String(e)})`))}
+                  >
                     แชร์
                   </Button>
                 )}
